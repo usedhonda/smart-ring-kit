@@ -5,20 +5,29 @@ on:
   pull_request:
 permissions:
   contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 jobs:
   swift:
     name: Swift tests
     runs-on: macos-15
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - run: python3 scripts/check-catalog.py
       - run: swift test
       - run: swift run smart-ring --help
   ios:
     name: iOS build
     runs-on: macos-15
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Compile library for iOS
         run: xcodebuild -scheme SmartRingKit -destination 'generic/platform=iOS' -derivedDataPath .local/ios-build CODE_SIGNING_ALLOWED=NO build
       - name: Type-check the SwiftUI example
