@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.5.0 — 2026-11-08
 
 - Resume spot-heart-rate, HRV and ordinary-temperature history from an existing record timestamp, preserving the hint during pagination; document full-history fallback for unmatched timestamps.
 - Clarify the distinction between raw fatigue and vendor-app stress; document sample/receipt timing and incremental ingestion.
