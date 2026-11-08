@@ -12,7 +12,13 @@ final class ProtocolTests: XCTestCase {
             XCTAssertEqual(bytes.count, 16)
             XCTAssertEqual(bytes[1], 0)
             XCTAssertEqual(bytes[15], bytes.prefix(15).reduce(0, &+))
+            let continuation = [UInt8](command.readPacket(continuing: true))
+            XCTAssertEqual(continuation.count, 16)
+            XCTAssertEqual(continuation[1], command.isHistory ? 2 : 0)
+            XCTAssertEqual(continuation[15], continuation.prefix(15).reduce(0, &+))
         }
+        XCTAssertFalse(RingReadCommand.historyCommands.contains(.deviceClock))
+        XCTAssertEqual(RingReadCommand.historyCommands.count, 10)
     }
 
     func testDeviceInfoDecodesAndRejectsCorruption() throws {
@@ -42,7 +48,7 @@ final class ProtocolTests: XCTestCase {
         XCTAssertThrowsError(try decoder.append(Data([0x56, 0xff])))
     }
 
-    func testInvalidDateAndTruncatedNotificationsAreRejected() {
+    func testInvalidDateAndTruncatedNotificationsAreRejected() throws {
         for (index, value) in [(4, UInt8(0x13)), (5, 0x30), (6, 0x24), (7, 0x6a)] {
             var malformed = record
             malformed[index] = value
@@ -52,6 +58,13 @@ final class ProtocolTests: XCTestCase {
         XCTAssertThrowsError(try decoder.append(Data(record.dropLast())))
         XCTAssertThrowsError(try decoder.append(Data(record + [0x56, 0xfe])))
         XCTAssertTrue(decoder.records.isEmpty)
+
+        let zone = try XCTUnwrap(TimeZone(identifier: "America/New_York"))
+        let skippedTime = try RingPacketDecoder.timestamp([0x24, 0x03, 0x10, 0x02, 0x30, 0])
+        XCTAssertNil(skippedTime.date(in: zone))
+        XCTAssertNotNil(skippedTime.date(in: TimeZone(secondsFromGMT: 0)!))
+        let validTime = try RingPacketDecoder.timestamp([0x24, 0x03, 0x10, 0x03, 0x30, 0])
+        XCTAssertNotNil(validTime.date(in: zone))
     }
 
     func testHistoryLimitAndAtomicNotification() throws {

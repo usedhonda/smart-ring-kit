@@ -86,6 +86,33 @@ public struct RingRawHistoryDecoder: Sendable {
         let b = [UInt8](data)
         notifications.append(b)
         byteCount += b.count
-        isComplete = b.suffix(2) == [command.rawValue, 0xff]
+        isComplete = hasTerminator(b)
+    }
+
+    private func hasTerminator(_ bytes: [UInt8]) -> Bool {
+        guard bytes.suffix(2) == [command.rawValue, 0xff] else { return false }
+        if bytes.count == 2 { return true }
+        let widths: [Int]
+        switch command {
+        case .hrvHistory: widths = [15]
+        case .sleepHistory: widths = [34, 130]
+        case .heartRateHistory: widths = [24]
+        case .spotHeartRateHistory, .oxygenHistory: widths = [10]
+        case .manualOxygenHistory: widths = [10, 31]
+        case .temperatureHistory: widths = [11, 15]
+        case .activityHistory, .exerciseHistory: widths = [25]
+        case .dailyActivityHistory: widths = [26, 27]
+        default: return false
+        }
+        func fitsRecords(_ count: Int) -> Bool {
+            widths.contains { width in
+                count > 0 && count.isMultiple(of: width)
+                    && (command != .sleepHistory || width != 130 || count == 130)
+                    && stride(from: 0, to: count, by: width).allSatisfy { bytes[$0] == command.rawValue }
+            }
+        }
+        // Marker-shaped payload bytes must not stop capture. For unknown or
+        // ambiguous layouts retain the notification and await a definite marker.
+        return !fitsRecords(bytes.count) && fitsRecords(bytes.count - 2)
     }
 }

@@ -109,6 +109,14 @@ nightly values/screenshots are distributed. This is an observed device/firmware
 profile, not a universal mapping or clinical validation. Codes 10/11 and future
 values stay `unknown`. Callers explicitly choose this profile or supply a custom one.
 
+The ring stores local wall-clock components without a time zone or UTC offset.
+Callers supply the historical time zone explicitly. `RingTimestamp.date(in:)`
+returns `nil` if conversion in that zone cannot preserve all original calendar
+components, including invalid dates and local times skipped by a daylight-saving
+change. Sleep analysis rejects those records. Repeated local times during a fall
+daylight-saving change remain ambiguous: the protocol has no offset to distinguish
+the two occurrences, so a time zone alone cannot establish which one was recorded.
+
 Analysis returns a timestamped timeline and durations in seconds. Source
 resolution is one/five minutes; block seconds jitter. Analysis aligns starts to
 minute boundaries while preserving source timestamps/records. Identical overlap
