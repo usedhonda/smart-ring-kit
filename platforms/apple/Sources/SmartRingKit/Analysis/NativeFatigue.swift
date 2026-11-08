@@ -253,9 +253,14 @@ public struct RingFatigueEstimator: Sendable {
         }
         let rows = points.map { p in [1.0] + (0..<width).map { (p.x[$0] - means[$0]) / scales[$0] } }
         let n = width + 1
-        var matrix = (0..<n).map { j in
-            (0..<n).map { k in rows.reduce(0) { $0 + $1[j] * $1[k] } + (j == k && j > 0 ? penalty : 0) }
-                + [zip(rows, points).reduce(0) { $0 + $1.0[j] * $1.1.y }]
+        var matrix: [[Double]] = Array(repeating: Array(repeating: 0, count: n + 1), count: n)
+        for j in 0..<n {
+            for k in 0..<n {
+                var sum = 0.0
+                for row in rows { sum += row[j] * row[k] }
+                matrix[j][k] = sum + (j == k && j > 0 ? penalty : 0)
+            }
+            for i in points.indices { matrix[j][n] += rows[i][j] * points[i].y }
         }
         for j in 0..<n {
             let pivot = (j..<n).max { abs(matrix[$0][j]) < abs(matrix[$1][j]) }!
@@ -268,7 +273,7 @@ public struct RingFatigueEstimator: Sendable {
                 for k in j...n { matrix[i][k] -= factor * matrix[j][k] }
             }
         }
-        let coefficients = matrix.map { $0[n] }
+        let coefficients: [Double] = matrix.map { $0[n] }
         guard coefficients.allSatisfy(\.isFinite) else { return nil }
         return Regression(means: means, scales: scales,
             lower: (0..<width).map { j in points.map { $0.x[j] }.min()! },
