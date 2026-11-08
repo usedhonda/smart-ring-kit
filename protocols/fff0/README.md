@@ -95,11 +95,17 @@ numbers as clinical sleep stages. A marker-like sequence inside a complete
 record is not treated as completion.
 
 These formats and additional command IDs are SDK evidence, not proof that every
-command works on the target ring. Raw transfers only check the response header,
-byte budget and command/ff terminator; they do not validate field semantics or
-prove that all historical pages have been read. Version 0.3.0 continues after an
-idle page boundary. Timeouts fail, and the optional notification callback lets researchers
-keep partial responses locally. No vendor SDK source is bundled.
+command works on the target ring. Raw transfers check the response header and
+byte budget. A standalone `command ff` marker completes the transfer. An appended
+marker completes it only when the preceding bytes fit a known record layout with
+the expected command at each record boundary, and the whole notification does
+not itself fit a known record layout. Marker-shaped payload bytes therefore do
+not end a transfer. Unknown or ambiguous framing retains the original bytes and
+waits for an unambiguous marker. A transfer without that marker fails at its
+timeout or byte limit; the optional notification callback lets researchers keep
+partial responses locally. These framing checks do not validate field semantics
+or prove that all historical pages have been read. Version 0.3.0 continues after
+an idle page boundary. No vendor SDK source is bundled.
 
 An iOS hardware check with this implementation discovered the existing
 system-connected ring and read firmware, battery and sleep history. It received
