@@ -1,0 +1,24 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  swift:
+    name: Swift tests
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift test
+      - run: swift run smart-ring --help
+  ios:
+    name: iOS build
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile library for iOS
+        run: xcodebuild -scheme SmartRingKit -destination 'generic/platform=iOS' -derivedDataPath .local/ios-build CODE_SIGNING_ALLOWED=NO build
+      - name: Type-check the SwiftUI example
+        run: xcrun --sdk iphoneos swiftc -typecheck -target arm64-apple-ios16.0 -sdk "$(xcrun --sdk iphoneos --show-sdk-path)" -I .local/ios-build/Build/Products/Debug-iphoneos Examples/RingDemoView.swift
