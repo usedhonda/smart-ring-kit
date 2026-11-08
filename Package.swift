@@ -9,8 +9,10 @@ let package = Package(
         .executable(name: "smart-ring", targets: ["smart-ring"])
     ],
     targets: [
-        .target(name: "SmartRingKit"),
-        .executableTarget(name: "smart-ring", dependencies: ["SmartRingKit"]),
-        .testTarget(name: "SmartRingKitTests", dependencies: ["SmartRingKit"])
+        .target(name: "SmartRingKit", path: "platforms/apple/Sources/SmartRingKit"),
+        .executableTarget(name: "smart-ring", dependencies: ["SmartRingKit"],
+                          path: "platforms/apple/Sources/smart-ring"),
+        .testTarget(name: "SmartRingKitTests", dependencies: ["SmartRingKit"],
+                    path: "platforms/apple/Tests/SmartRingKitTests")
     ]
 )
