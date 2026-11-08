@@ -52,6 +52,11 @@ public struct RingSleepHistoryDecoder: Sendable {
 public struct RingRawHistory: Codable, Equatable, Sendable {
     public let command: UInt8
     public let notifications: [[UInt8]]
+
+    public init(command: UInt8, notifications: [[UInt8]]) {
+        self.command = command
+        self.notifications = notifications
+    }
 }
 
 public struct RingRawHistoryDecoder: Sendable {

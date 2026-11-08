@@ -37,8 +37,8 @@ The client must still call `connect` before using such a peripheral.
 ## Requests
 
 Each request is 16 bytes, initially zero-filled. Byte 0 is the command and byte
-15 is the sum of bytes 0–14 modulo 256. History byte 1 is always `0x00`, the
-initial read mode. This library exposes no generic write or delete-mode API.
+15 is the sum of bytes 0–14 modulo 256. History byte 1 is `0x00` for the
+initial read and `0x02` for continuation. This library exposes no generic write or delete-mode API.
 
 | Command | Meaning | Response used |
 | --- | --- | --- |
@@ -46,11 +46,15 @@ initial read mode. This library exposes no generic write or delete-mode API.
 | 0x13 | Battery | Byte 1, percentage 0–100 |
 | 0x56 | HRV history | Record-aligned notifications ending in `56 ff` |
 | 0x53 | Sleep history (experimental) | SDK layouts below; ends in `53 ff` |
-| 0x54 | Heart-rate history (raw, experimental) | Uninterpreted notifications |
-| 0x62 | Temperature history (raw, experimental) | Uninterpreted notifications |
-| 0x66 | Automatic oxygen history (raw, experimental) | Uninterpreted notifications |
-| 0x52 | Detailed activity history (raw, experimental) | Uninterpreted notifications |
-| 0x51 | Daily activity history (raw, experimental) | Uninterpreted notifications |
+| 0x54 | Dynamic heart-rate history | 24-byte rows; 15 bpm samples |
+| 0x55 | Spot heart-rate history | 10-byte rows |
+| 0x62 | Temperature history | Legacy 11/observed 15-byte rows |
+| 0x66 | Automatic oxygen history | 10-byte rows |
+| 0x67 | Manual oxygen history | Legacy 10/observed opaque 31-byte rows |
+| 0x52 | Detailed activity history | 25-byte rows |
+| 0x51 | Daily activity history | 26/27-byte rows |
+| 0x5c | Exercise history | 25-byte rows; empty transfer verified |
+| 0x41 | Device clock | Read-only BCD wall clock, no time zone |
 
 Response checksums have not been established. The parser validates response
 type, necessary lengths, calendar fields, battery range, record limits, and
@@ -61,14 +65,13 @@ history framing. It does not claim cryptographic integrity or authentication.
 Each record is 15 bytes. A notification contains whole records; the final
 notification may append the two bytes `56 ff`, or carry only that terminator.
 A final byte `ff` inside a full record is not treated as completion. Truncated
-notifications and missing completion are errors. Additional transfer modes,
-pagination/continuation beyond the observed transfer, and different framing
-variants are not implemented.
+notifications and missing completion are errors. Version 0.3.0 adds read-only
+continuation, described in [the data contract](data-model.md).
 
 | Offset | Meaning |
 | --- | --- |
 | 0 | 0x56 |
-| 1–2 | Uninterpreted |
+| 1–2 | Observed record counter; diagnostic interpretation only |
 | 3–8 | BCD year (2000+), month, day, hour, minute, second |
 | 9 | SDK-labelled HRV raw value |
 | 10 | Uninterpreted |
@@ -94,19 +97,19 @@ record is not treated as completion.
 These formats and additional command IDs are SDK evidence, not proof that every
 command works on the target ring. Raw transfers only check the response header,
 byte budget and command/ff terminator; they do not validate field semantics or
-prove that all historical pages have been read. No automatic continuation mode
-is sent. Timeouts fail, and the optional notification callback lets researchers
+prove that all historical pages have been read. Version 0.3.0 continues after an
+idle page boundary. Timeouts fail, and the optional notification callback lets researchers
 keep partial responses locally. No vendor SDK source is bundled.
 
 An iOS hardware check with this implementation discovered the existing
 system-connected ring and read firmware, battery and sleep history. It received
 174 packets of 130 bytes and one `53 ff` marker. All 174 records and 15,607
 category bytes passed the decoder with original bytes preserved. This verifies
-the one-minute layout on that device, not category meanings or sleep-score
-equivalence. No vendor-app UI interaction or firmware/configuration writes were
-used. A dynamic heart-rate probe returned 50 packets of 168 bytes but no final
-marker before timeout; it is a partial capture, not a complete history. Pagination
-for that command remains unsupported.
+the one-minute layout on that device. Later stage-duration comparison is described
+below; sleep-score equivalence remains unverified. No firmware/configuration
+writes were used. A dynamic heart-rate probe returned 50 packets of 168 bytes but no final
+marker before timeout in 0.2.0. Version 0.3.0 added idle-aware continuation and
+completed this command, along with every other stored-history command listed above.
 
 Separate fresh iOS connections completed raw temperature (120 notifications),
 automatic oxygen (86), detailed activity (238) and daily activity (3) transfers,
@@ -115,12 +118,31 @@ measurement validation. Personal payloads and peripheral identifiers are omitted
 
 ## Compatibility work remaining
 
-- Complete a full HRV transfer with the released iOS client, separately from
-  the initial probe and offline capture replay; sleep and the additional raw
-  transfers above have now been checked on iOS hardware.
-- Test iOS co-connection with the vendor app and collisions between requests.
+- Establish a coordination method for vendor-app sync; simultaneous history
+  requests interfered with acquisition on the tested device.
 - Evaluate background restoration and iOS scheduling on a dedicated app.
 - Add another model only with protocol evidence and synthetic regression cases.
+
+## 0.3.0 source/interpretation boundary
+
+Continuation evidence is the reference SDK sample's `HeartRateInfoActivity.java`
+and `DetailSleepActivity.java`: mode 2 is requested at 50 notifications. The
+client waits for a three-second idle boundary because tested firmware streams
+some categories past that count automatically, and received counts can stop at
+49. A single public `RingHistoryReader.readAll` run completed all ten histories
+on iOS hardware after the vendor app was closed, with no unexpected responses.
+Earlier simultaneous vendor-app requests caused gaps and connection failures.
+Counter diagnostics, unexpected notification capture and per-category failure
+flags keep these visible. Dynamic heart rate completed with contiguous counters.
+Detailed activity retained one counter gap: a separate reread returned exactly
+the same record payloads and gap. This is reported without inventing a record.
+
+The sleep mapping `1=deep, 2=light, 3=REM, 5=awake` is an observed profile for the
+tested firmware. All four stage-duration totals matched the vendor app on two
+separate nights. Codes 10/11 remain unknown. No nightly values are published.
+The named profile selects only this observed mapping.
+See [data-model.md](data-model.md) for classification, overlap, missingness, units
+and opaque-record handling. No score algorithm or night boundaries are invented.
 
 No firmware modification is needed for this read subset. Firmware updates,
 reset, history deletion, clock configuration, and medical interpretation are

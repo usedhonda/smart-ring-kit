@@ -7,7 +7,7 @@ final class ProtocolTests: XCTestCase {
     private let record: [UInt8] = [0x56, 0, 0, 0x24, 0x02, 0x29, 0x12, 0x34, 0x56, 42, 0, 65, 30, 0, 0]
 
     func testReadRequestsCannotSelectDeleteMode() {
-        for command in [RingReadCommand.firmware, .battery, .hrvHistory] {
+        for command in RingReadCommand.allCases {
             let bytes = [UInt8](command.packet)
             XCTAssertEqual(bytes.count, 16)
             XCTAssertEqual(bytes[1], 0)

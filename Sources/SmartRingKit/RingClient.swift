@@ -31,6 +31,8 @@ public final class RingClient: NSObject, @preconcurrency CBCentralManagerDelegat
     private var sleepHistory = RingSleepHistoryDecoder()
     private var rawHistory: RingRawHistoryDecoder?
     private var rawNotificationHandler: (@MainActor (Data) -> Void)?
+    private var unexpectedNotificationHandler: (@MainActor (Data) -> Void)?
+    private var continuationTimer: Timer?
 
     private enum Phase {
         case idle, discovery, connecting
@@ -77,6 +79,12 @@ public final class RingClient: NSObject, @preconcurrency CBCentralManagerDelegat
         return RingInfo(firmware: version, batteryPercent: battery)
     }
 
+    public func readDeviceClock(timeout: TimeInterval = 10) async throws -> RingTimestamp {
+        let data = try await request(.deviceClock, timeout: timeout)
+        guard data.count >= 7 else { throw RingError.invalidPacket("device clock length") }
+        return try RingPacketDecoder.timestamp(Array(data.dropFirst().prefix(6)))
+    }
+
     /// Read all currently available HRV records. Never deletes or acknowledges deletion.
     /// Timeouts/errors disconnect the local client so a late response cannot pollute a retry.
     public func readHRVHistory(timeout: TimeInterval = 40, maxRecords: Int = 10_000) async throws -> [RingHRVRecord] {
@@ -106,14 +114,16 @@ public final class RingClient: NSObject, @preconcurrency CBCentralManagerDelegat
     }
 
     /// Probe a supported read-only history command without inventing field semantics.
-    /// Completes on the SDK-style command/0xff marker; pagination is not implemented.
+    /// Completes on the SDK-style command/0xff marker, with idle-aware read continuation.
     public func readRawHistory(_ command: RingReadCommand, timeout: TimeInterval = 40,
                                maxBytes: Int = 2_000_000,
-                               onNotification: (@MainActor (Data) -> Void)? = nil) async throws -> RingRawHistory {
+                               onNotification: (@MainActor (Data) -> Void)? = nil,
+                               onUnexpectedNotification: (@MainActor (Data) -> Void)? = nil) async throws -> RingRawHistory {
         guard continuation == nil else { throw RingError.busy }
         rawHistory = try RingRawHistoryDecoder(command: command, maxBytes: maxBytes)
         rawNotificationHandler = onNotification
-        defer { rawNotificationHandler = nil }
+        unexpectedNotificationHandler = onUnexpectedNotification
+        defer { rawNotificationHandler = nil; unexpectedNotificationHandler = nil }
         guard case .raw(let result) = try await send(command, timeout: timeout, raw: true) else {
             throw RingError.invalidPacket("unexpected raw history response")
         }
@@ -179,6 +189,8 @@ public final class RingClient: NSObject, @preconcurrency CBCentralManagerDelegat
     }
 
     private func finish(_ result: Result<Response, Error>) {
+        continuationTimer?.invalidate()
+        continuationTimer = nil
         let callback = continuation
         continuation = nil
         operationID = nil
@@ -274,18 +286,32 @@ public final class RingClient: NSObject, @preconcurrency CBCentralManagerDelegat
         if let error { fail(RingError.transport(error.localizedDescription)); return }
         guard let data = characteristic.value, !data.isEmpty else { return }
         if case .rawHistory(let command) = phase {
-            guard data.first == command.rawValue else { return }
+            guard data.first == command.rawValue else {
+                unexpectedNotificationHandler?(data)
+                if let byte = data.first, RingReadCommand(rawValue: byte)?.isHistory == true {
+                    fail(RingError.conflictingHistoryResponse(expected: command.rawValue, received: byte))
+                }
+                return
+            }
+            continuationTimer?.invalidate()
             rawNotificationHandler?(data)
             do {
                 guard rawHistory != nil else { throw RingError.invalidPacket("missing raw decoder") }
                 try rawHistory?.append(data)
                 if let decoder = rawHistory, decoder.isComplete { finish(.success(.raw(decoder.result))) }
+                else { scheduleContinuation(command) }
             } catch { fail(error) }
             return
         }
         guard case .request(let command) = phase else { return }
+        if data.first == command.rawValue { continuationTimer?.invalidate() }
         // Other clients may receive/write on the same peripheral. Ignore other response types.
-        if command != .hrvHistory, data.first != command.rawValue { return }
+        guard data.first == command.rawValue else {
+            if command.isHistory, let byte = data.first, RingReadCommand(rawValue: byte)?.isHistory == true {
+                fail(RingError.conflictingHistoryResponse(expected: command.rawValue, received: byte))
+            }
+            return
+        }
         do {
             switch command {
             case .firmware:
@@ -294,17 +320,36 @@ public final class RingClient: NSObject, @preconcurrency CBCentralManagerDelegat
             case .battery:
                 _ = try RingPacketDecoder.battery(data)
                 finish(.success(.packet(data)))
+            case .deviceClock:
+                guard data.count >= 7 else { throw RingError.invalidPacket("device clock length") }
+                _ = try RingPacketDecoder.timestamp(Array(data.dropFirst().prefix(6)))
+                finish(.success(.packet(data)))
             case .hrvHistory:
-                if data.first != command.rawValue { return }
                 try history.append(data)
                 if history.isComplete { finish(.success(.history(history.records))) }
+                else { scheduleContinuation(command) }
             case .sleepHistory:
                 try sleepHistory.append(data)
                 if sleepHistory.isComplete { finish(.success(.sleep(sleepHistory.records))) }
+                else { scheduleContinuation(command) }
             default:
                 throw RingError.invalidPacket("additional history requires readRawHistory")
             }
         } catch { fail(error) }
+    }
+
+    private func scheduleContinuation(_ command: RingReadCommand) {
+        guard let operationID else { return }
+        // The sample uses 50 responses, but hardware may deliver 49 before stalling.
+        // Continue only at an idle boundary, never count received packets as proof
+        // that the ring sent the whole page. Any next packet invalidates this timer.
+        continuationTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: false) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.operationID == operationID,
+                      let p = self.peripheral, let tx = self.writeCharacteristic else { return }
+                p.writeValue(command.readPacket(continuing: true), for: tx, type: .withResponse)
+            }
+        }
     }
 }
 #endif
