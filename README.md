@@ -120,7 +120,7 @@ bash scripts/smart-ring info --id <uuid-from-scan>
 bash scripts/smart-ring history --id <uuid-from-scan>
 bash scripts/smart-ring sleep --id <uuid-from-scan>
 bash scripts/smart-ring raw-temperature --id <uuid-from-scan>
-bash scripts/smart-ring capture --id <uuid-from-scan> --output ./private-captures
+bash scripts/smart-ring capture --id <uuid-from-scan> --output .local/private-captures
 ```
 
 Bluetooth permission may be attributed to the terminal/hosting application.
@@ -137,8 +137,11 @@ swift run smart-ring decode-sleep sleep-packets.hex
 
 History output contains health data. The library does not store or upload it.
 The CLI prints JSON or writes private files with the explicit `capture` command.
-Protect these files and
-do not attach personal captures to public issues. Tests use synthetic data.
+Keep captures under the ignored `.local/` directory. The generated `ring-capture-*`
+directories and the older `private-captures/` example path are also ignored to
+reduce accidental commits. Renamed files and redirected CLI output still need
+an ignored/private destination. Do not attach personal captures to public issues.
+Tests use synthetic data.
 
 ## Data meaning and current limits
 
