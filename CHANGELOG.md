@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.1 — 2026-11-08
+
+- Keep CLI capture directories ignored and harden CI checkout credentials, pinning and timeouts.
+- Require record-aligned history terminators so marker-shaped payload bytes do not end a transfer early.
+- Reject timestamp conversions that normalize invalid or daylight-saving-skipped local times.
+- Isolate raw-read callbacks and cancel stale pagination waits before they can affect another operation.
+- Bound partial capture buffers and preserve conflict detection when byte budgets are exhausted.
+- Validate snapshot limits before Bluetooth initialization and avoid unused CLI Bluetooth clients.
+- Update project/Apple usage documentation and correct published commit attribution.
+
 ## 0.4.0 — 2026-11-08
 
 - Separate platform implementations, protocol evidence/vectors and exact device/firmware profiles.
