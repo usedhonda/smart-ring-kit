@@ -104,9 +104,9 @@ struct SmartRingCLI {
             print(folder.path)
             return
         }
-        let client = RingClient()
-        defer { client.disconnect() }
         if args == ["scan"] {
+            let client = RingClient()
+            defer { client.disconnect() }
             try output(await client.discover())
             return
         }
@@ -122,6 +122,8 @@ struct SmartRingCLI {
             throw RingError.invalidPacket("invalid arguments; run smart-ring --help")
         }
         if args[0] == "all" { try output(await RingHistoryReader.readAll(from: id)); return }
+        let client = RingClient()
+        defer { client.disconnect() }
         // Wait for Bluetooth initialization and include already system-connected devices.
         _ = try await client.discover(duration: 2)
         try await client.connect(to: id)
