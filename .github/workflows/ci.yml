@@ -11,6 +11,7 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+      - run: python3 scripts/check-catalog.py
       - run: swift test
       - run: swift run smart-ring --help
   ios:
@@ -21,4 +22,4 @@ jobs:
       - name: Compile library for iOS
         run: xcodebuild -scheme SmartRingKit -destination 'generic/platform=iOS' -derivedDataPath .local/ios-build CODE_SIGNING_ALLOWED=NO build
       - name: Type-check the SwiftUI example
-        run: xcrun --sdk iphoneos swiftc -typecheck -target arm64-apple-ios16.0 -sdk "$(xcrun --sdk iphoneos --show-sdk-path)" -I .local/ios-build/Build/Products/Debug-iphoneos Examples/RingDemoView.swift
+        run: xcrun --sdk iphoneos swiftc -typecheck -target arm64-apple-ios16.0 -sdk "$(xcrun --sdk iphoneos --show-sdk-path)" -I .local/ios-build/Build/Products/Debug-iphoneos platforms/apple/Examples/RingDemoView.swift

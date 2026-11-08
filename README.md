@@ -9,6 +9,9 @@ app and can be embedded in an iOS or macOS app.
 to verify metadata and all ten supported stored-history transfers. Other models and firmware versions are unverified.
 This is an unofficial project, unaffiliated with issin or J-Style.
 
+**0.4.0:** [Device/firmware profiles and contribution architecture](docs/architecture.md)
+separate platform implementations from shared protocol evidence.
+
 **0.3.0:** [Read all ten stored-history categories](docs/data-model.md) in one
 call, with original data, structured records and per-category completion/errors.
 Sleep classification is available through an explicit device/firmware profile
@@ -70,7 +73,7 @@ func readSelectedRing(using client: RingClient, id: UUID) async throws -> [RingH
 // Pass that candidate's `id` to readSelectedRing.
 ```
 
-[Examples/RingDemoView.swift](Examples/RingDemoView.swift) is a minimal foreground
+[platforms/apple/Examples/RingDemoView.swift](platforms/apple/Examples/RingDemoView.swift) is a minimal foreground
 SwiftUI reader. Add it to a blank iOS app, add the package and Bluetooth purpose
 string, and display `RingDemoView()` in the app's WindowGroup.
 
@@ -162,6 +165,22 @@ by this protocol; avoid simultaneous sync requests. macOS and iPhone may also
 compete for the ring's physical connection. No repeated polling or reconnection
 is started automatically.
 
+## Repository and contributions
+
+Device compatibility is tracked by **product + exact firmware + platform** in
+[the catalog](devices/README.md). The current verified firmware is `0.7.5.0`;
+newer firmware is not automatically considered compatible. Use
+`RingDeviceProfiles.matching(deviceID:firmware:)` for exact interpretation-profile
+selection; unknown pairs return nil. Raw FFF0 APIs remain explicitly selected.
+
+Protocol evidence and synthetic cross-language vectors live in `protocols/`;
+Apple sources/tests/examples live in `platforms/apple/`. Android has a
+[porting contract](platforms/android/README.md), but no implementation yet.
+The root Swift Package URL, library product and `import SmartRingKit` stay unchanged.
+
+See [CONTRIBUTING](CONTRIBUTING.md) for adding a device, firmware or platform and
+[architecture](docs/architecture.md) for the boundaries.
+
 ## Development
 
 ```sh
@@ -177,4 +196,6 @@ provenance, and the boundaries of current support.
 
 ## License
 
-New implementation: [MIT](LICENSE). Third-party SDK code is not included.
+Original implementation: [MIT](LICENSE). Commercial/closed-source embedding is
+permitted with the required copyright/license notices. See [embedding and license
+notes](docs/licensing.md). Third-party SDK code is not included or relicensed by MIT.
