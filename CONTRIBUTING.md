@@ -26,9 +26,10 @@ privacy, copy the no-reply address issued in your own GitHub email settings;
 `git var GIT_AUTHOR_IDENT` and `git var GIT_COMMITTER_IDENT` before committing.
 Add `Co-authored-by` only for actual co-authors, using an address they have confirmed.
 
-The root `.mailmap` corrects the early placeholder identity in Git tools that honor
-mailmaps. Stored commits and their IDs remain unchanged. GitHub's contributor
-sidebar is not guaranteed to reflect this mapping.
+The early placeholder identity was corrected in the published Git history and
+release tags. A mailmap is not a replacement for setting the correct stored author
+and committer identity. If you cloned before that correction, use a fresh clone
+before contributing so that the old history is not accidentally reintroduced.
 
 ## Choose your contribution
 
