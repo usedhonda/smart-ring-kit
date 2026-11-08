@@ -1,6 +1,9 @@
 .build/
 .swiftpm/
 .local/
+# CLI captures contain health data, including when saved outside .local/.
+private-captures/
+ring-capture-*/
 .DS_Store
 *.xcodeproj/xcuserdata/
 *.xcworkspace/xcuserdata/
