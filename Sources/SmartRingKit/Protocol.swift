@@ -20,11 +20,20 @@ public enum RingError: Error, LocalizedError, Equatable {
     }
 }
 
-/// Only non-destructive requests in the experimentally verified protocol subset.
+/// Non-destructive requests. Sleep and other additional histories are based on
+/// the reference SDK; hardware support must be verified per device/firmware.
 public enum RingReadCommand: UInt8, Sendable {
     case firmware = 0x27
     case battery = 0x13
     case hrvHistory = 0x56
+    case sleepHistory = 0x53
+    case heartRateHistory = 0x54
+    case temperatureHistory = 0x62
+    case oxygenHistory = 0x66
+    case activityHistory = 0x52
+    case dailyActivityHistory = 0x51
+
+    var isHistory: Bool { self != .firmware && self != .battery }
 
     public var packet: Data {
         var bytes = [UInt8](repeating: 0, count: 16)
@@ -91,14 +100,21 @@ public enum RingPacketDecoder {
         guard b.count == 15, b[0] == RingReadCommand.hrvHistory.rawValue else {
             throw RingError.invalidPacket("HRV record header or length")
         }
+        let t = try timestamp(Array(b[3...8]))
+        return RingHRVRecord(timestamp: t, hrvRaw: b[9], heartRateBPM: b[11],
+                             stressRaw: b[12], rawBytes: b)
+    }
+
+    static func timestamp(_ b: [UInt8]) throws -> RingTimestamp {
+        guard b.count == 6 else { throw RingError.invalidPacket("timestamp length") }
         func bcd(_ byte: UInt8) throws -> Int {
             guard byte >> 4 < 10, byte & 0x0f < 10 else {
                 throw RingError.invalidPacket("non-BCD timestamp")
             }
             return Int(byte >> 4) * 10 + Int(byte & 0x0f)
         }
-        let t = try RingTimestamp(year: 2000 + bcd(b[3]), month: bcd(b[4]), day: bcd(b[5]),
-                                  hour: bcd(b[6]), minute: bcd(b[7]), second: bcd(b[8]))
+        let t = try RingTimestamp(year: 2000 + bcd(b[0]), month: bcd(b[1]), day: bcd(b[2]),
+                                  hour: bcd(b[3]), minute: bcd(b[4]), second: bcd(b[5]))
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!
         guard let date = t.date(in: calendar.timeZone) else {
@@ -109,8 +125,7 @@ public enum RingPacketDecoder {
               parts.hour == t.hour, parts.minute == t.minute, parts.second == t.second else {
             throw RingError.invalidPacket("out-of-range timestamp")
         }
-        return RingHRVRecord(timestamp: t, hrvRaw: b[9], heartRateBPM: b[11],
-                             stressRaw: b[12], rawBytes: b)
+        return t
     }
 }
 

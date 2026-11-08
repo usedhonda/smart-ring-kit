@@ -6,7 +6,7 @@ The initial experimental driver targets the FFF0 protocol observed on the
 app and can be embedded in an iOS or macOS app.
 
 **Early experimental release.** One ring with firmware `0.7.5.0` has been used
-to verify the read protocol. Other models and firmware versions are unverified.
+to verify firmware, battery, HRV and sleep read protocols. Other models and firmware versions are unverified.
 This is an unofficial project, unaffiliated with issin or J-Style.
 
 ## What works
@@ -15,9 +15,11 @@ This is an unofficial project, unaffiliated with issin or J-Style.
 - Connect, subscribe to notifications, and read firmware and battery level.
 - Read existing HRV history, including SDK-labelled HRV, heart rate, and stress values.
 - Decode saved notification packets offline and export structured JSON through a CLI.
+- Experimental sleep-history reads with one-minute/five-minute raw category arrays.
+- Raw history probes for SDK-defined heart-rate, temperature, oxygen and activity commands.
 - Cancel an operation, enforce timeouts and record limits, and disconnect on transfer errors.
 
-The implementation sends three read requests. It does not change firmware,
+The implementation sends read-only requests. It does not change firmware,
 delete history, configure sampling, or access the manufacturer's account/cloud.
 It has no third-party package dependencies.
 
@@ -72,12 +74,38 @@ without its terminator fails rather than returning a supposedly complete set.
 
 ## Command-line tool
 
+Sleep support (0.2.0+) is experimental. Use `try await client.readSleepHistory()`
+for SDK-layout sleep records. `categoryValues` are deliberately unlabelled:
+REM/deep/light/awake mappings and equivalence to the official app are unknown.
+`sampleIntervalMinutes` preserves the SDK's one-minute or five-minute layout.
+No sleep score, session aggregation or inferred HealthKit sleep stages are generated.
+
+On-device verification with the new iOS client received 174 sleep blocks in the
+130-byte layout, plus a separate transfer terminator. Offline decoding preserved
+all blocks and their 15,607 category values, using the SDK's one-minute interval.
+This sample count is not a claimed duration of sleep. Personal captures are not
+included. The five-minute layout is covered by synthetic tests only.
+
+For protocol research, `try await client.readRawHistory(.temperatureHistory)`
+returns bounded, uninterpreted notification bytes. Other supported history kinds
+are `.sleepHistory`, `.heartRateHistory`, `.oxygenHistory`, `.activityHistory`,
+`.dailyActivityHistory` and `.hrvHistory`. An optional `onNotification` callback
+can preserve partial responses when a transfer later times out. The callback
+receives sensitive data; do not log it publicly. Additional device support,
+metric interpretation and transfers requiring pagination remain unverified.
+Fresh iOS connections completed raw temperature, oxygen, detailed-activity and
+daily-activity transfers on the same ring. Their field decoding is not yet
+implemented. Dynamic heart-rate history stopped after 50 notifications without
+an end marker and remains incomplete; it is not advertised as a successful read.
+
 On macOS, use the wrapper so the executable contains a Bluetooth purpose string:
 
 ```sh
 bash scripts/smart-ring scan
 bash scripts/smart-ring info --id <uuid-from-scan>
 bash scripts/smart-ring history --id <uuid-from-scan>
+bash scripts/smart-ring sleep --id <uuid-from-scan>
+bash scripts/smart-ring raw-temperature --id <uuid-from-scan>
 ```
 
 Bluetooth permission may be attributed to the terminal/hosting application.
@@ -89,6 +117,7 @@ Offline decoding accepts one complete notification per line as hexadecimal:
 
 ```sh
 swift run smart-ring decode-history packets.hex
+swift run smart-ring decode-sleep sleep-packets.hex
 ```
 
 History output contains health data. The library does not store or upload it;

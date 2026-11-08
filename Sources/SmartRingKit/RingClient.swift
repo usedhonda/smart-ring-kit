@@ -28,13 +28,18 @@ public final class RingClient: NSObject, @preconcurrency CBCentralManagerDelegat
     private var operationID: UUID?
     private var phase: Phase = .idle
     private var history = RingHistoryDecoder()
+    private var sleepHistory = RingSleepHistoryDecoder()
+    private var rawHistory: RingRawHistoryDecoder?
+    private var rawNotificationHandler: (@MainActor (Data) -> Void)?
 
     private enum Phase {
         case idle, discovery, connecting
         case request(RingReadCommand)
+        case rawHistory(RingReadCommand)
     }
     private enum Response {
         case devices([RingPeripheral]), ready, packet(Data), history([RingHRVRecord])
+        case sleep([RingSleepRecord]), raw(RingRawHistory)
     }
 
     public override init() {
@@ -89,6 +94,32 @@ public final class RingClient: NSObject, @preconcurrency CBCentralManagerDelegat
         closeConnection()
     }
 
+    /// Experimental SDK-defined sleep history, retaining unlabelled sleep categories.
+    public func readSleepHistory(timeout: TimeInterval = 40, maxRecords: Int = 10_000) async throws -> [RingSleepRecord] {
+        guard continuation == nil else { throw RingError.busy }
+        guard maxRecords > 0 else { throw RingError.recordLimitExceeded }
+        sleepHistory = RingSleepHistoryDecoder(maxRecords: maxRecords)
+        guard case .sleep(let records) = try await send(.sleepHistory, timeout: timeout) else {
+            throw RingError.invalidPacket("unexpected sleep response")
+        }
+        return records
+    }
+
+    /// Probe a supported read-only history command without inventing field semantics.
+    /// Completes on the SDK-style command/0xff marker; pagination is not implemented.
+    public func readRawHistory(_ command: RingReadCommand, timeout: TimeInterval = 40,
+                               maxBytes: Int = 2_000_000,
+                               onNotification: (@MainActor (Data) -> Void)? = nil) async throws -> RingRawHistory {
+        guard continuation == nil else { throw RingError.busy }
+        rawHistory = try RingRawHistoryDecoder(command: command, maxBytes: maxBytes)
+        rawNotificationHandler = onNotification
+        defer { rawNotificationHandler = nil }
+        guard case .raw(let result) = try await send(command, timeout: timeout, raw: true) else {
+            throw RingError.invalidPacket("unexpected raw history response")
+        }
+        return result
+    }
+
     private func request(_ command: RingReadCommand, timeout: TimeInterval) async throws -> Data {
         guard case .packet(let data) = try await send(command, timeout: timeout) else {
             throw RingError.invalidPacket("unexpected response")
@@ -96,10 +127,10 @@ public final class RingClient: NSObject, @preconcurrency CBCentralManagerDelegat
         return data
     }
 
-    private func send(_ command: RingReadCommand, timeout: TimeInterval) async throws -> Response {
+    private func send(_ command: RingReadCommand, timeout: TimeInterval, raw: Bool = false) async throws -> Response {
         guard let p = peripheral, p.state == .connected, let tx = writeCharacteristic,
               notifyCharacteristic?.isNotifying == true else { throw RingError.disconnected }
-        return try await perform(timeout: timeout, phase: .request(command)) {
+        return try await perform(timeout: timeout, phase: raw ? .rawHistory(command) : .request(command)) {
             p.writeValue(command.packet, for: tx, type: .withResponse)
         }
     }
@@ -241,7 +272,18 @@ public final class RingClient: NSObject, @preconcurrency CBCentralManagerDelegat
     public func peripheral(_ p: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
         guard p === peripheral, characteristic.uuid == Self.notifyID else { return }
         if let error { fail(RingError.transport(error.localizedDescription)); return }
-        guard case .request(let command) = phase, let data = characteristic.value, !data.isEmpty else { return }
+        guard let data = characteristic.value, !data.isEmpty else { return }
+        if case .rawHistory(let command) = phase {
+            guard data.first == command.rawValue else { return }
+            rawNotificationHandler?(data)
+            do {
+                guard rawHistory != nil else { throw RingError.invalidPacket("missing raw decoder") }
+                try rawHistory?.append(data)
+                if let decoder = rawHistory, decoder.isComplete { finish(.success(.raw(decoder.result))) }
+            } catch { fail(error) }
+            return
+        }
+        guard case .request(let command) = phase else { return }
         // Other clients may receive/write on the same peripheral. Ignore other response types.
         if command != .hrvHistory, data.first != command.rawValue { return }
         do {
@@ -256,6 +298,11 @@ public final class RingClient: NSObject, @preconcurrency CBCentralManagerDelegat
                 if data.first != command.rawValue { return }
                 try history.append(data)
                 if history.isComplete { finish(.success(.history(history.records))) }
+            case .sleepHistory:
+                try sleepHistory.append(data)
+                if sleepHistory.isComplete { finish(.success(.sleep(sleepHistory.records))) }
+            default:
+                throw RingError.invalidPacket("additional history requires readRawHistory")
             }
         } catch { fail(error) }
     }

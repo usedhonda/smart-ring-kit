@@ -21,7 +21,12 @@ struct SmartRingCLI {
             smart-ring scan
             smart-ring info --id <peripheral-uuid>
             smart-ring history --id <peripheral-uuid>
+            smart-ring sleep --id <peripheral-uuid>
+            smart-ring raw-<kind> --id <peripheral-uuid>
             smart-ring decode-history <hex-packets-file>
+            smart-ring decode-sleep <hex-packets-file>
+
+            Raw kinds: sleep, heart-rate, temperature, oxygen, activity, daily-activity.
 
             scan runs for 8 seconds. History prints sensitive health data as JSON.
             decode-history reads one hex notification per line, without Bluetooth.
@@ -29,9 +34,10 @@ struct SmartRingCLI {
             """)
             return
         }
-        if args.count == 2, args[0] == "decode-history" {
+        if args.count == 2, ["decode-history", "decode-sleep"].contains(args[0]) {
             let text = try String(contentsOfFile: args[1], encoding: .utf8)
             var decoder = RingHistoryDecoder()
+            var sleepDecoder = RingSleepHistoryDecoder()
             for line in text.split(whereSeparator: \.isNewline) {
                 let hex = line.filter { !$0.isWhitespace }
                 guard !hex.isEmpty, hex.count.isMultiple(of: 2) else {
@@ -47,10 +53,16 @@ struct SmartRingCLI {
                     bytes.append(byte)
                     index = end
                 }
-                try decoder.append(Data(bytes))
+                if args[0] == "decode-sleep" { try sleepDecoder.append(Data(bytes)) }
+                else { try decoder.append(Data(bytes)) }
             }
-            guard decoder.isComplete else { throw RingError.invalidPacket("missing history terminator") }
-            try output(decoder.records)
+            if args[0] == "decode-sleep" {
+                guard sleepDecoder.isComplete else { throw RingError.invalidPacket("missing sleep terminator") }
+                try output(sleepDecoder.records)
+            } else {
+                guard decoder.isComplete else { throw RingError.invalidPacket("missing history terminator") }
+                try output(decoder.records)
+            }
             return
         }
         #if os(macOS)
@@ -60,7 +72,12 @@ struct SmartRingCLI {
             try output(await client.discover())
             return
         }
-        guard args.count == 3, ["info", "history"].contains(args[0]),
+        let rawKinds: [String: RingReadCommand] = [
+            "raw-sleep": .sleepHistory, "raw-heart-rate": .heartRateHistory,
+            "raw-temperature": .temperatureHistory, "raw-oxygen": .oxygenHistory,
+            "raw-activity": .activityHistory, "raw-daily-activity": .dailyActivityHistory
+        ]
+        guard args.count == 3, ["info", "history", "sleep"].contains(args[0]) || rawKinds[args[0]] != nil,
               args[1] == "--id", let id = UUID(uuidString: args[2]) else {
             throw RingError.invalidPacket("invalid arguments; run smart-ring --help")
         }
@@ -68,6 +85,8 @@ struct SmartRingCLI {
         _ = try await client.discover(duration: 2)
         try await client.connect(to: id)
         if args[0] == "info" { try output(await client.readInfo()) }
+        else if args[0] == "sleep" { try output(await client.readSleepHistory()) }
+        else if let command = rawKinds[args[0]] { try output(await client.readRawHistory(command)) }
         else { try output(await client.readHRVHistory()) }
         #else
         throw RingError.transport("Bluetooth CLI commands require macOS; use RingClient in an iOS app")

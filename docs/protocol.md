@@ -45,6 +45,12 @@ initial read mode. This library exposes no generic write or delete-mode API.
 | 0x27 | Firmware | Bytes 1–4, hexadecimal components joined by dots |
 | 0x13 | Battery | Byte 1, percentage 0–100 |
 | 0x56 | HRV history | Record-aligned notifications ending in `56 ff` |
+| 0x53 | Sleep history (experimental) | SDK layouts below; ends in `53 ff` |
+| 0x54 | Heart-rate history (raw, experimental) | Uninterpreted notifications |
+| 0x62 | Temperature history (raw, experimental) | Uninterpreted notifications |
+| 0x66 | Automatic oxygen history (raw, experimental) | Uninterpreted notifications |
+| 0x52 | Detailed activity history (raw, experimental) | Uninterpreted notifications |
+| 0x51 | Daily activity history (raw, experimental) | Uninterpreted notifications |
 
 Response checksums have not been established. The parser validates response
 type, necessary lengths, calendar fields, battery range, record limits, and
@@ -73,10 +79,45 @@ variants are not implemented.
 All bytes are retained. The time zone, HRV algorithm/unit, stress scale, and
 equivalence with values displayed by the vendor app are not established.
 
+## Experimental sleep layout
+
+The SDK's `getSleepData` describes a single 130-byte record carrying one-minute
+categories, or notifications of one or more 34-byte records carrying five-minute
+categories. A final notification may append `53 ff`; that marker can also arrive
+alone. Offsets 3–8 are the same BCD date/time fields as HRV, byte 9 is the number
+of category bytes, and categories start at byte 10. Counts must fit the record
+(120 or 24). The decoder rejects unknown layouts, invalid clocks and oversized
+category counts atomically. It retains full records without labelling category
+numbers as clinical sleep stages. A marker-like sequence inside a complete
+record is not treated as completion.
+
+These formats and additional command IDs are SDK evidence, not proof that every
+command works on the target ring. Raw transfers only check the response header,
+byte budget and command/ff terminator; they do not validate field semantics or
+prove that all historical pages have been read. No automatic continuation mode
+is sent. Timeouts fail, and the optional notification callback lets researchers
+keep partial responses locally. No vendor SDK source is bundled.
+
+An iOS hardware check with this implementation discovered the existing
+system-connected ring and read firmware, battery and sleep history. It received
+174 packets of 130 bytes and one `53 ff` marker. All 174 records and 15,607
+category bytes passed the decoder with original bytes preserved. This verifies
+the one-minute layout on that device, not category meanings or sleep-score
+equivalence. No vendor-app UI interaction or firmware/configuration writes were
+used. A dynamic heart-rate probe returned 50 packets of 168 bytes but no final
+marker before timeout; it is a partial capture, not a complete history. Pagination
+for that command remains unsupported.
+
+Separate fresh iOS connections completed raw temperature (120 notifications),
+automatic oxygen (86), detailed activity (238) and daily activity (3) transfers,
+including their command/ff markers. These are verified byte transfers, not typed
+measurement validation. Personal payloads and peripheral identifiers are omitted.
+
 ## Compatibility work remaining
 
-- Verify the released RingClient's full transfer against hardware, separately
-  from the initial probe and offline capture replay.
+- Complete a full HRV transfer with the released iOS client, separately from
+  the initial probe and offline capture replay; sleep and the additional raw
+  transfers above have now been checked on iOS hardware.
 - Test iOS co-connection with the vendor app and collisions between requests.
 - Evaluate background restoration and iOS scheduling on a dedicated app.
 - Add another model only with protocol evidence and synthetic regression cases.
