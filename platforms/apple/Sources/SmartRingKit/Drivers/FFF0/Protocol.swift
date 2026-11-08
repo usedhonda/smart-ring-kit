@@ -48,6 +48,32 @@ public enum RingReadCommand: UInt8, Sendable, CaseIterable, Codable {
         readPacket(continuing: false)
     }
 
+    /// Requests history from an existing record's ring-local timestamp (inclusive).
+    /// Observed on firmware 0.7.5.0 for spot heart rate, HRV and temperature only.
+    /// An unmatched timestamp returned all retained records on the tested firmware.
+    /// This is a resume hint, not an arbitrary date filter; consumers must deduplicate.
+    public func historyRequest(resumingFrom timestamp: RingTimestamp) throws -> Data {
+        try readPacket(continuing: false, resumingFrom: timestamp)
+    }
+
+    func readPacket(continuing: Bool, resumingFrom timestamp: RingTimestamp) throws -> Data {
+        guard [.spotHeartRateHistory, .hrvHistory, .temperatureHistory].contains(self) else {
+            throw RingError.invalidPacket("timestamp resume is not established for this command")
+        }
+        guard (2000...2099).contains(timestamp.year),
+              timestamp.date(in: TimeZone(secondsFromGMT: 0)!) != nil else {
+            throw RingError.invalidPacket("invalid history start date")
+        }
+        var bytes = [UInt8](readPacket(continuing: continuing))
+        let components = [timestamp.year - 2000, timestamp.month, timestamp.day,
+                          timestamp.hour, timestamp.minute, timestamp.second]
+        for (index, value) in components.enumerated() {
+            bytes[4 + index] = UInt8((value / 10) << 4 | (value % 10))
+        }
+        bytes[15] = bytes.prefix(15).reduce(0, &+)
+        return Data(bytes)
+    }
+
     func readPacket(continuing: Bool) -> Data {
         var bytes = [UInt8](repeating: 0, count: 16)
         bytes[0] = rawValue
@@ -72,6 +98,16 @@ public struct RingTimestamp: Codable, Equatable, Sendable {
     public let minute: Int
     public let second: Int
 
+    /// Calendar validity is checked when encoding a request or converting to a Date.
+    public init(year: Int, month: Int, day: Int, hour: Int, minute: Int, second: Int) {
+        self.year = year
+        self.month = month
+        self.day = day
+        self.hour = hour
+        self.minute = minute
+        self.second = second
+    }
+
     /// The caller must choose the time zone used when the ring recorded this value.
     /// Invalid dates and wall-clock times skipped by a daylight-saving change return nil.
     public func date(in timeZone: TimeZone) -> Date? {
@@ -92,6 +128,8 @@ public struct RingHRVRecord: Codable, Equatable, Sendable {
     public let timestamp: RingTimestamp
     public let hrvRaw: UInt8
     public let heartRateBPM: UInt8
+    /// Legacy SDK name for byte 12; the observed vendor log calls it fatigue.
+    /// This is not the vendor app's finer-grained stress score.
     public let stressRaw: UInt8
     /// Uninterpreted record bytes, retained for future protocol research.
     public let rawBytes: [UInt8]

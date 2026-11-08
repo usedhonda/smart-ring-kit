@@ -97,6 +97,42 @@ it and fails the request instead of blending responses. The bulk reader sets
 more requests that might reset another reader's shared history cursor. Unrelated
 live/metadata notifications are preserved without being parsed as the requested kind.
 
+## Resume history from an existing record
+
+```swift
+// Use a timestamp from a previously persisted record of the same command.
+let raw = try await client.readRawHistory(.spotHeartRateHistory,
+                                         resumingFrom: savedHeartRecord.timestamp)
+let records = try await client.readHRVHistory(resumingFrom: savedHRVRecord.timestamp)
+```
+
+The supported subset is spot heart rate (0x55), HRV (0x56) and ordinary temperature
+(0x62). On firmware 0.7.5.0, an exact retained record timestamp returned that record
+and newer records. An arbitrary nonmatching cutoff instead returned all retained
+history. This is an **inclusive resume hint, not a guaranteed date-range filter**.
+Other firmware and missing/expired timestamps may behave differently.
+
+Preserve the timestamp from the same device and history kind, including seconds.
+It is a ring-local calendar value with no time zone. Do not substitute phone UTC,
+round to a minute or use the current clock as a cursor. Years outside 2000–2099
+and invalid dates fail before a Bluetooth write. Other commands reject a non-nil
+hint until their behavior is established. Nil preserves the original all-retained
+history request. Existing `RingTimestamp` values can be reused directly; its public
+initializer is available when reconstructing persisted components.
+
+Initial mode 0 and continuation mode 2 carry the same timestamp fields. Hardware
+checks completed all three commands with exact recent timestamps, included the
+anchor and returned no earlier record. Nonmatching requests completed too, but
+returned old records; consumers must accept and deduplicate those records rather
+than treating a requested timestamp as proof of returned coverage. The raw API
+does not discard data client-side to simulate device filtering.
+
+Persist the resume hint beside the raw result when journaling: `RingRawHistory`
+contains responses, not request parameters. Advance a saved cursor only after
+successful durable persistence, and retain overlapping anchors to catch late data.
+The bulk snapshot API continues to read all retained categories. See
+[stress and ingestion timing](stress-and-ingestion.md) for incremental ingestion.
+
 ## Sleep stages
 
 ```swift

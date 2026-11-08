@@ -56,6 +56,23 @@ initial read and `0x02` for continuation. This library exposes no generic write 
 | 0x5c | Exercise history | 25-byte rows; empty transfer verified |
 | 0x41 | Device clock | Read-only BCD wall clock, no time zone |
 
+### Timestamp resume subset
+
+Observed vendor requests on firmware `0.7.5.0` encode a ring-local timestamp in
+bytes 4–9: BCD year minus 2000, month, day, hour, minute, second. The checksum
+includes these bytes. Vendor current-day reads used timestamps matching stored
+records. Direct public-API tests then distinguished exact anchors from arbitrary
+cutoffs: exact recent anchors returned the anchor and newer records for 0x55,
+0x56 and 0x62; nonmatching timestamps returned all retained history instead.
+
+The driver exposes this subset as `resumingFrom`, an inclusive timestamp resume
+hint, not an arbitrary date filter. Mode-2 continuations preserve that hint.
+Consumers must deduplicate and must not assume every response satisfies a lower
+bound. A timestamp that has expired may no longer be an anchor. This is evidence
+from one device/firmware, not a universal FFF0 guarantee. A separate observed
+0x69 stream did not honor a date-bearing request, so other commands remain
+unavailable through the timestamp API. No erase/configuration mode is exposed.
+
 Response checksums have not been established. The parser validates response
 type, necessary lengths, calendar fields, battery range, record limits, and
 history framing. It does not claim cryptographic integrity or authentication.
@@ -76,11 +93,13 @@ continuation, described in [the data contract](../../docs/data-model.md).
 | 9 | SDK-labelled HRV raw value |
 | 10 | Uninterpreted |
 | 11 | SDK-labelled heart rate in bpm |
-| 12 | SDK-labelled stress raw value |
+| 12 | Legacy SDK-labelled stress; observed vendor log calls it fatigue |
 | 13–14 | Uninterpreted |
 
 All bytes are retained. The time zone, HRV algorithm/unit, stress scale, and
 equivalence with values displayed by the vendor app are not established.
+In particular, this byte is not the vendor app's finer-grained stress score;
+see [stress evidence](../../docs/stress-and-ingestion.md).
 
 ## Experimental sleep layout
 
