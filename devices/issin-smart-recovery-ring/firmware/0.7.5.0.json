@@ -1,0 +1,41 @@
+{
+  "formatVersion": 1,
+  "id": "issin-smart-recovery-ring-0.7.5.0",
+  "deviceID": "issin-smart-recovery-ring",
+  "firmware": "0.7.5.0",
+  "protocolID": "fff0",
+  "status": "hardware-verified",
+  "implementations": {
+    "apple": "hardware-verified"
+  },
+  "historyCommands": [
+    86,
+    83,
+    84,
+    98,
+    102,
+    82,
+    81,
+    85,
+    103,
+    92
+  ],
+  "sleepStages": {
+    "1": "deep",
+    "2": "light",
+    "3": "rem",
+    "5": "awake"
+  },
+  "unknownSleepCodes": [
+    10,
+    11
+  ],
+  "evidence": "../README.md",
+  "limitations": [
+    "Observed manual-oxygen 31-byte records remain opaque.",
+    "Temperature and some activity units are unestablished.",
+    "Detailed activity retained one stable counter gap on reread.",
+    "Exercise returned an empty history; nonempty exercise decoding has SDK evidence only.",
+    "Concurrent vendor-app history requests interfere with acquisition."
+  ]
+}

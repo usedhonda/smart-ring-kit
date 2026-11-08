@@ -16,9 +16,7 @@ public struct RingSleepStageMapping: Sendable {
 
     /// Matched against stage-duration totals on the vendor app for this firmware.
     /// Codes 10/11 and future values intentionally stay unknown.
-    public static let issinFirmware0750 = RingSleepStageMapping(
-        name: "issin-0.7.5.0-observed", values: [1: .deep, 2: .light, 3: .rem, 5: .awake]
-    )
+    public static let issinFirmware0750 = RingDeviceProfiles.issinSmartRecoveryRing0750.sleepMapping!
 }
 
 public struct RingSleepInterval: Codable, Equatable, Sendable {

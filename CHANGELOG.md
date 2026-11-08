@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.0 — 2026-11-08
+
+- Separate platform implementations, protocol evidence/vectors and exact device/firmware profiles.
+- Preserve root Swift Package entry points and existing public APIs.
+- Add exact firmware profile lookup without fallback to unknown devices or versions.
+- Check shared synthetic decoder vectors and Swift/catalog agreement in CI.
+- Document contributions for new devices, firmware and Android ports, plus embedding/license obligations.
+
 ## 0.3.0 — 2026-11-08
 
 - Read all ten stored-history categories in one call with raw data, decoded records and per-category failures.
