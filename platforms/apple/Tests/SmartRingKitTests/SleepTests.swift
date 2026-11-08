@@ -65,12 +65,38 @@ final class SleepTests: XCTestCase {
         XCTAssertThrowsError(try RingRawHistoryDecoder(command: .firmware))
     }
 
-    func testAdditionalRequestsKeepInitialReadModeAndChecksum() {
-        for command in [RingReadCommand.sleepHistory, .heartRateHistory, .temperatureHistory,
-                        .oxygenHistory, .activityHistory, .dailyActivityHistory] {
-            let b = [UInt8](command.packet)
-            XCTAssertEqual(b[1], 0)
-            XCTAssertEqual(b[15], b.prefix(15).reduce(0, &+))
+    func testRawCompletionRequiresRecordBoundary() throws {
+        let layouts: [(RingReadCommand, Int)] = [
+            (.hrvHistory, 15), (.sleepHistory, 34), (.sleepHistory, 130), (.heartRateHistory, 24),
+            (.spotHeartRateHistory, 10), (.oxygenHistory, 10), (.manualOxygenHistory, 10),
+            (.manualOxygenHistory, 31), (.temperatureHistory, 11), (.temperatureHistory, 15),
+            (.activityHistory, 25), (.exerciseHistory, 25), (.dailyActivityHistory, 26), (.dailyActivityHistory, 27)
+        ]
+        for (command, width) in layouts {
+            var row = [UInt8](repeating: 0, count: width)
+            row[0] = command.rawValue
+            row[width - 2] = command.rawValue
+            row[width - 1] = 0xff
+            var decoder = try RingRawHistoryDecoder(command: command)
+            try decoder.append(Data(row))
+            XCTAssertFalse(decoder.isComplete, "\(command) width \(width)")
+            try decoder.append(Data(row + [command.rawValue, 0xff]))
+            XCTAssertTrue(decoder.isComplete, "\(command) width \(width)")
+            XCTAssertEqual(decoder.notifications, [row, row + [command.rawValue, 0xff]])
         }
+
+        var decoder = try RingRawHistoryDecoder(command: .temperatureHistory)
+        let unknown: [UInt8] = [0x62, 0, 0x62, 0xff]
+        try decoder.append(Data(unknown))
+        XCTAssertFalse(decoder.isComplete)
+        // This is both seven complete 11-byte records and five 15-byte records
+        // followed by marker-shaped payload bytes: do not end an ambiguous frame.
+        var ambiguous = [UInt8](repeating: 0x62, count: 77)
+        ambiguous[76] = 0xff
+        try decoder.append(Data(ambiguous))
+        XCTAssertFalse(decoder.isComplete)
+        try decoder.append(Data([0x62, 0xff]))
+        XCTAssertTrue(decoder.isComplete)
+        XCTAssertEqual(decoder.notifications, [unknown, ambiguous, [0x62, 0xff]])
     }
 }
