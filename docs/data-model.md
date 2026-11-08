@@ -182,3 +182,11 @@ Earlier files remain if the last file cannot be completed. Protect these health
 data files. Offline commands accept `{command, notifications}` JSON (the `raw`
 object inside a capture). Sleep CLI analysis requires the transfer terminator.
 Unknown values and failures stay visible.
+
+## Multimodal research
+
+`RingStressInputs.assemble` joins existing decoded categories by measurement
+time, keeping stale/missing/conflicting data distinct. Optional explicit windows
+produce descriptive HR reference statistics and mapped sleep context. See
+[the API and offline request contract](stress-analysis.md); no fused stress score
+is inferred from the raw fields.

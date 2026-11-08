@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.0 — 2026-11-08
+
+- Assemble multimodal stress-research inputs with explicit historical clocks, age policy, latest-record conflicts, missing categories and preserved unknown units.
+- Add optional descriptive median/MAD heart-rate references and explicitly windowed/profiled sleep context; no validated stress score or fusion weights are introduced.
+- Add an offline `analyze-stress-inputs` CLI and document scientific references, source limitations and evaluation requirements.
+- Record experimentally verified ten-minute native HRV/fatigue storage and the limits of the offline app-stress observation.
+
 ## 0.5.0 — 2026-11-08
 
 - Resume spot-heart-rate, HRV and ordinary-temperature history from an existing record timestamp, preserving the hint during pagination; document full-history fallback for unmatched timestamps.

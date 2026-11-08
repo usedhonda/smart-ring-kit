@@ -6,6 +6,15 @@ import Darwin
 
 @main
 struct SmartRingCLI {
+    private struct StressInputRequest: Decodable {
+        let histories: [RingDecodedHistory]
+        let at: Date
+        let timeZone: String
+        let maximumAgeSeconds: Double
+        let referenceWindow: DateInterval?
+        let sleepWindow: DateInterval?
+        let sleepProfile: String?
+    }
     @MainActor static func main() async {
         do { try await run() }
         catch {
@@ -28,6 +37,7 @@ struct SmartRingCLI {
             smart-ring decode-history <hex-packets-file>
             smart-ring decode-sleep <hex-packets-file>
             smart-ring decode-raw <raw-history.json>
+            smart-ring analyze-stress-inputs <request.json>
             smart-ring analyze-sleep <raw-history.json> --time-zone <identifier> --profile issin-0.7.5.0
 
             Raw kinds: sleep, heart-rate, temperature, oxygen, activity, daily-activity.
@@ -37,6 +47,19 @@ struct SmartRingCLI {
             decode-history reads one hex notification per line, without Bluetooth.
             Bluetooth commands require macOS and Bluetooth permission. See README.
             """)
+            return
+        }
+        if args.count == 2, args[0] == "analyze-stress-inputs" {
+            let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+            let request = try decoder.decode(StressInputRequest.self, from: Data(contentsOf: URL(fileURLWithPath: args[1])))
+            guard let zone = TimeZone(identifier: request.timeZone),
+                  request.sleepProfile == nil || request.sleepProfile == "issin-0.7.5.0" else {
+                throw RingError.invalidPacket("unknown stress-input time zone or sleep profile")
+            }
+            try output(RingStressInputs.assemble(request.histories, at: request.at, timeZone: zone,
+                maximumAge: request.maximumAgeSeconds, referenceWindow: request.referenceWindow,
+                sleepWindow: request.sleepWindow,
+                sleepMapping: request.sleepProfile == nil ? nil : .issinFirmware0750))
             return
         }
         if args.count == 2, args[0] == "decode-raw" {

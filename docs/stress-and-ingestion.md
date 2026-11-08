@@ -1,5 +1,9 @@
 # Stress evidence and ingestion timing
 
+For independent analysis using multiple input categories, see
+[multimodal research inputs](stress-analysis.md). These helpers preserve source
+semantics and timing; they do not yet implement a validated stress classifier.
+
 ## Separate the measurements
 
 On the tested issin firmware `0.7.5.0`, a roughly thirty-minute capture of normal
@@ -7,6 +11,19 @@ vendor-app synchronization showed approximately ten-minute spot-heart-rate
 records and finer-grained stress points in the app's diagnostic summaries.
 HRV history was much coarser (hourly timestamps, with gaps). These are observations
 of existing settings and retained records, not fixed guarantees or SDK read limits.
+
+A separate temporary configuration experiment changed HRV monitoring from 60 to 10
+minutes and recovered four consecutive native HRV/fatigue records separated by
+600 seconds. The original 60-minute configuration was restored and read back.
+This confirms that native storage cadence can change on the tested firmware;
+it does not identify the app's fine stress score. Configuration setters are not
+part of the public read-only API.
+
+An offline ordinary sync also produced a new app stress endpoint after receiving
+new ring data while Internet access was disabled, with prior app state retained.
+A sync-time server request was therefore unnecessary for that point. This does
+not distinguish a finished BLE value from local computation or exclude cached
+server-derived baselines.
 
 The vendor diagnostic log names byte 12 of the 0x56 HRV record `fatigue`.
 `RingHRVRecord.stressRaw` preserves its legacy public name for compatibility,
@@ -23,8 +40,9 @@ rule out a different path in other app states or firmware.
 
 Only summary endpoints were recovered from the app log, not its complete stress
 arrays. A Mac-connected diagnostic capture is not a production iOS stress API.
-The vendor formula, full history access and whether processing is local or remote
-remain unresolved. SmartRingKit currently exposes no equivalent app stress score.
+The vendor formula and full stress history access remain unresolved; the offline
+result narrows sync-time networking requirements but does not identify the computation. SmartRingKit currently exposes no equivalent
+app stress score.
 No app binary, SDK binary or vendor health data is distributed with this project.
 
 ## Sample time is different from receipt time

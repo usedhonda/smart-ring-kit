@@ -1,5 +1,8 @@
 # Apple implementation
 
+For multimodal research and offline processing, see
+[the stress-input API, CLI and evidence boundaries](../../docs/stress-analysis.md).
+
 The current SmartRingKit implementation is written in Swift for **iOS 16+** and
 **macOS 13+**, with Swift 6+. It implements the observed FFF0 read subset.
 See [the device/firmware catalog](../../devices/README.md) for verified compatibility.
