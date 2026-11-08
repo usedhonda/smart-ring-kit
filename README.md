@@ -50,6 +50,11 @@ raw HRV/fatigue, activity, temperature, oxygen and explicitly mapped sleep with
 source times, age limits and conflicts preserved. The Apple API and offline CLI
 include a descriptive heart-rate reference, not a validated stress score.
 
+[Experimental native-fatigue estimation](docs/native-fatigue-estimation.md) learns
+from prior device observations and emits ten-minute slots with explicit native,
+estimated or unavailable status. Four correction methods support comparison;
+no psychological-stress accuracy or iOS scheduling guarantee is claimed.
+
 All implemented device requests are read-only. The toolkit does not configure
 sampling, erase data, update firmware or access the manufacturer's account/cloud.
 Concurrent vendor-app history requests interfered with acquisition; use exclusive

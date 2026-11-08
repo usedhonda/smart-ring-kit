@@ -2,6 +2,8 @@
 
 For multimodal research and offline processing, see
 [the stress-input API, CLI and evidence boundaries](../../docs/stress-analysis.md).
+The optional [native-fatigue predictor](../../docs/native-fatigue-estimation.md)
+is an experimental, explicitly selected model with ten-minute replay.
 
 The current SmartRingKit implementation is written in Swift for **iOS 16+** and
 **macOS 13+**, with Swift 6+. It implements the observed FFF0 read subset.

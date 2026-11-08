@@ -111,3 +111,11 @@ activity/sleep strata, source/firmware and sampling assumptions. App-score
 agreement evaluates imitation, not psychological validity. A validated stress
 estimator needs independent time-aligned labels and out-of-fitting evaluation.
 Input assembly does not itself establish improved prediction accuracy.
+
+
+## Optional experimental predictor
+
+The separate [native-fatigue estimation API](native-fatigue-estimation.md) can
+learn a personal proxy and explicitly compare correction methods between native
+anchors. This input assembler remains a score-free record/context API. The
+predictor is not a validated psychological-stress model.

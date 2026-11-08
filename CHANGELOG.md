@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.0 — 2026-11-08
+
+- Add an experimental native-fatigue predictor with explicit carry, regression, residual and learned-decay modes; no pretrained weights or psychological-stress validation.
+- Track measurement and availability times, preserve native versus estimated versus unavailable results, and exclude current HRV/fatigue inputs from the feature adapter.
+- Fit decay using past-day prediction errors, reject missing/stale/conflicting/extrapolated inputs, and add an offline ten-minute replay CLI.
+- Document chronological hidden-anchor evaluation, uncertain modality meanings and iOS scheduling limits.
+
 ## 0.6.0 — 2026-11-08
 
 - Assemble multimodal stress-research inputs with explicit historical clocks, age policy, latest-record conflicts, missing categories and preserved unknown units.

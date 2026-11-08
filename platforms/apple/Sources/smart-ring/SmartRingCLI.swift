@@ -15,6 +15,15 @@ struct SmartRingCLI {
         let sleepWindow: DateInterval?
         let sleepProfile: String?
     }
+    private struct FatigueReplayRequest: Decodable {
+        let samples: [RingFatigueSample]
+        let anchors: [RingNativeFatigueAnchor]
+        let trainingBefore: Date
+        let trainedAsOf: Date
+        let start: Date
+        let end: Date
+        let configuration: RingFatigueConfiguration
+    }
     @MainActor static func main() async {
         do { try await run() }
         catch {
@@ -38,6 +47,7 @@ struct SmartRingCLI {
             smart-ring decode-sleep <hex-packets-file>
             smart-ring decode-raw <raw-history.json>
             smart-ring analyze-stress-inputs <request.json>
+            smart-ring replay-native-fatigue <request.json>
             smart-ring analyze-sleep <raw-history.json> --time-zone <identifier> --profile issin-0.7.5.0
 
             Raw kinds: sleep, heart-rate, temperature, oxygen, activity, daily-activity.
@@ -47,6 +57,14 @@ struct SmartRingCLI {
             decode-history reads one hex notification per line, without Bluetooth.
             Bluetooth commands require macOS and Bluetooth permission. See README.
             """)
+            return
+        }
+        if args.count == 2, args[0] == "replay-native-fatigue" {
+            let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+            let r = try decoder.decode(FatigueReplayRequest.self, from: Data(contentsOf: URL(fileURLWithPath: args[1])))
+            let estimator = try RingFatigueEstimator(samples: r.samples, anchors: r.anchors,
+                before: r.trainingBefore, asOf: r.trainedAsOf, configuration: r.configuration)
+            try output(estimator.tenMinuteSeries(samples: r.samples, anchors: r.anchors, start: r.start, end: r.end))
             return
         }
         if args.count == 2, args[0] == "analyze-stress-inputs" {
