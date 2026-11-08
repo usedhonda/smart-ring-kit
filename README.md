@@ -1,201 +1,88 @@
 # SmartRingKit
 
-A small Swift library for reading smart-ring data directly over Bluetooth LE.
-The initial experimental driver targets the FFF0 protocol observed on the
-**issin Smart Recovery Ring**. The package is independent of the manufacturer's
-app and can be embedded in an iOS or macOS app.
+An open-source toolkit for reading smart-ring data directly over Bluetooth LE,
+with shared protocol specifications, device/firmware profiles and platform implementations.
 
-**Early experimental release.** One ring with firmware `0.7.5.0` has been used
-to verify metadata and all ten supported stored-history transfers. Other models and firmware versions are unverified.
-This is an unofficial project, unaffiliated with issin or J-Style.
+The project brings protocol evidence and reusable test data together so contributors
+can add devices, firmware variants and platform ports in one place. The first
+implementation targets the **issin Smart Recovery Ring**, firmware `0.7.5.0`,
+using the observed FFF0 protocol. This is an experimental, unofficial project,
+unaffiliated with issin or J-Style.
 
-**0.4.0:** [Device/firmware profiles and contribution architecture](docs/architecture.md)
-separate platform implementations from shared protocol evidence.
+## Current support
 
-**0.3.0:** [Read all ten stored-history categories](docs/data-model.md) in one
-call, with original data, structured records and per-category completion/errors.
-Sleep classification is available through an explicit device/firmware profile
-checked against the vendor app on two nights. Unmapped codes and fields stay visible.
+| Component | Status |
+| --- | --- |
+| Device | issin Smart Recovery Ring; other devices unverified |
+| Firmware | Exactly `0.7.5.0`; other versions do not inherit its interpretation profile |
+| iOS | Swift implementation; all ten stored-history transfers verified on one ring |
+| macOS | Same Apple implementation and CLI; build/codec tests pass; full-history radio acquisition unverified |
+| Android | Not implemented; [porting guide](platforms/android/README.md) available |
 
-## What works
+Compatibility is tracked by **device + exact firmware + platform**, not inferred
+from a matching BLE service or advertising name. See the [device catalog](devices/README.md)
+for evidence and field-level limitations.
 
-- Discover advertising `SRR-*` candidates and system-connected FFF0 peripherals.
-- Connect, subscribe to notifications, and read firmware and battery level.
-- Read existing HRV history, including SDK-labelled HRV, heart rate, and stress values.
-- Decode saved notification packets offline and export structured JSON through a CLI.
-- Experimental sleep-history reads with one-minute/five-minute raw category arrays.
-- One-call acquisition of all ten stored histories, with typed decoding where established.
-- Sleep timelines and stage durations with overlap, missingness and unknown codes visible.
-- Raw data, opaque records and counter-gap diagnostics retained for further interpretation.
-- Cancel an operation, enforce timeouts and record limits, and disconnect on transfer errors.
+## Data available today
 
-The implementation sends read-only requests. It does not change firmware,
-delete history, configure sampling, or access the manufacturer's account/cloud.
-It has no third-party package dependencies.
+The current FFF0 implementation reads firmware, battery, device clock and ten
+stored-history categories:
 
-## Requirements and installation
+- HRV/stress, dynamic heart rate and spot heart rate.
+- Sleep categories, with an explicitly selected deep/light/REM/awake profile.
+- Temperature, automatic oxygen and manual oxygen.
+- Detailed activity, daily activity and exercise.
 
-Swift 6.0+, iOS 16+ or macOS 13+. Add this repository using Xcode's
-**File → Add Package Dependencies**, select version `0.3.0` or later, and link
-the **SmartRingKit** library product. Only add the library product to an iOS app;
-the `smart-ring` executable is a separate developer tool.
+Transfers retain original notifications, decoded records, opaque records,
+per-category failures and observed counter gaps. A completed transfer does not
+mean every field is understood or every past measurement is still retained.
+Manual oxygen's observed 31-byte records remain opaque; some units are unknown.
+Exercise returned an empty history on hardware, so nonempty decoding remains
+hardware-unverified. Sleep-stage totals matched the vendor app on two nights;
+unknown codes, conflicts and missing coverage remain visible. No score is invented.
+See the [data contract](docs/data-model.md) for details.
 
-In Package.swift:
+All implemented device requests are read-only. The toolkit does not configure
+sampling, erase data, update firmware or access the manufacturer's account/cloud.
+Concurrent vendor-app history requests interfered with acquisition; use exclusive
+reads. Background sync and real-time measurements remain unverified.
 
-```swift
-.package(url: "https://github.com/usedhonda/smart-ring-kit.git", from: "0.3.0")
-// Target dependency:
-.product(name: "SmartRingKit", package: "smart-ring-kit")
-```
+## Use it in your application
 
-The hosting app must provide `NSBluetoothAlwaysUsageDescription` in its
-Info.plist. A sandboxed macOS app also needs the Bluetooth entitlement
-`com.apple.security.device.bluetooth`. The package does not request background
-modes or configure the host app's permissions.
+- **iOS/macOS:** [Apple installation, capture API, sleep analysis and CLI](platforms/apple/README.md).
+  The current library uses Swift Package Manager; its module is `SmartRingKit`.
+- **Android:** no library artifact yet. Start with the [platform contribution guide](platforms/android/README.md).
+- **Other devices/firmware:** check the [catalog](devices/README.md) before reusing
+  a driver or mapping. Unknown firmware receives no automatic interpretation.
 
-## Read from an app
+Shared specifications and synthetic fixtures are language-neutral. A port can
+reuse them without depending on the Apple implementation.
 
-Use the main actor and retain one client for the connection's lifetime:
+## Repository map
 
-```swift
-import SmartRingKit
+| Location | Purpose |
+| --- | --- |
+| [`protocols/`](protocols/fff0/README.md) | Wire formats, evidence and synthetic cross-language decoder vectors |
+| [`devices/`](devices/README.md) | Product compatibility and exact firmware profiles |
+| [`platforms/apple/`](platforms/apple/README.md) | Current Swift library, macOS CLI, tests and examples |
+| [`platforms/android/`](platforms/android/README.md) | Future Android implementation boundary and porting guide |
+| [`docs/architecture.md`](docs/architecture.md) | Protocol, device/firmware and platform boundaries |
+| [`Package.swift`](Package.swift) | Stable root entry point for the Apple package |
 
-@MainActor
-func readSelectedRing(using client: RingClient, id: UUID) async throws -> [RingHRVRecord] {
-    try await client.connect(to: id)
-    defer { client.disconnect() }
-    let info = try await client.readInfo()
-    print(info.firmware, info.batteryPercent)
-    return try await client.readHRVHistory()
-}
+## Contribute
 
-// First call `try await client.discover()` and let the user select a candidate.
-// Pass that candidate's `id` to readSelectedRing.
-```
+[CONTRIBUTING.md](CONTRIBUTING.md) walks through adding another device, a firmware
+variant or a platform implementation, constructing synthetic test data and opening
+a PR. Document what was actually tested; preserve unknown fields and compatibility
+limits. Do not publish personal health captures, device identifiers or proprietary
+SDK artifacts. The PR template covers evidence, validation and provenance.
 
-[platforms/apple/Examples/RingDemoView.swift](platforms/apple/Examples/RingDemoView.swift) is a minimal foreground
-SwiftUI reader. Add it to a blank iOS app, add the package and Bluetooth purpose
-string, and display `RingDemoView()` in the app's WindowGroup.
-
-Only one operation may run on a client at a time. A disconnected read fails
-immediately. Cancellation, timeouts, and transport/parser errors close the
-local connection; discover/connect again before retrying. A history response
-without its terminator fails rather than returning a supposedly complete set.
-
-## Command-line tool
-
-Sleep support (0.2.0+) is experimental. Use `try await client.readSleepHistory()`
-for SDK-layout sleep records. `categoryValues` are deliberately unlabelled:
-For firmware 0.7.5.0, the explicitly selected `.issinFirmware0750` analysis
-profile maps deep/light/REM/awake; its stage totals matched two vendor-app nights.
-Other mappings and full app-analysis equivalence remain unverified.
-`sampleIntervalMinutes` preserves the SDK's one-minute or five-minute layout.
-No sleep score, session aggregation or inferred HealthKit sleep stages are generated.
-
-On-device verification with the new iOS client received 174 sleep blocks in the
-130-byte layout, plus a separate transfer terminator. Offline decoding preserved
-all blocks and their 15,607 category values, using the SDK's one-minute interval.
-This sample count is not a claimed duration of sleep. Personal captures are not
-included. The five-minute layout is covered by synthetic tests only.
-
-For protocol research, `try await client.readRawHistory(.temperatureHistory)`
-returns bounded, uninterpreted notification bytes. Other supported history kinds
-are `.sleepHistory`, `.heartRateHistory`, `.oxygenHistory`, `.activityHistory`,
-`.dailyActivityHistory`, `.spotHeartRateHistory`, `.manualOxygenHistory`,
-`.exerciseHistory` and `.hrvHistory`. An optional `onNotification` callback
-can preserve partial responses when a transfer later times out. The callback
-receives sensitive data; do not log it publicly. Additional device support and
-some metric interpretations remain unverified.
-Fresh iOS connections completed raw temperature, oxygen, detailed-activity and
-daily-activity transfers on the same ring. Version 0.3.0 decodes supported sensor
-layouts and adds idle-aware continuation, completing dynamic/spot heart rate and
-manual oxygen too. Unknown temperature extensions and the manual-oxygen 31-byte
-format remain preserved without guessed meanings. See [data models](docs/data-model.md).
-
-On macOS, use the wrapper so the executable contains a Bluetooth purpose string:
-
-```sh
-bash scripts/smart-ring scan
-bash scripts/smart-ring info --id <uuid-from-scan>
-bash scripts/smart-ring history --id <uuid-from-scan>
-bash scripts/smart-ring sleep --id <uuid-from-scan>
-bash scripts/smart-ring raw-temperature --id <uuid-from-scan>
-bash scripts/smart-ring capture --id <uuid-from-scan> --output ./private-captures
-```
-
-Bluetooth permission may be attributed to the terminal/hosting application.
-`scan` returns candidates as JSON after eight seconds. Select the ring you own;
-a matching name or service alone does not establish device compatibility.
-The UUID is a CoreBluetooth identifier, not a Bluetooth MAC address.
-
-Offline decoding accepts one complete notification per line as hexadecimal:
-
-```sh
-swift run smart-ring decode-history packets.hex
-swift run smart-ring decode-sleep sleep-packets.hex
-```
-
-History output contains health data. The library does not store or upload it.
-The CLI prints JSON or writes private files with the explicit `capture` command.
-Protect these files and
-do not attach personal captures to public issues. Tests use synthetic data.
-
-## Data meaning and current limits
-
-`hrvRaw` and `stressRaw` retain the original unsigned byte values. The HRV
-algorithm/unit and stress scale have **not** been established. A zero value is
-preserved; it is not automatically treated as a missing or valid measurement.
-Do not write `hrvRaw` into HealthKit's SDNN metric without validating equivalence.
-`heartRateBPM` follows the SDK-labelled heart-rate field. Other fields remain in
-`rawBytes` without a medical interpretation.
-
-The ring supplies a wall-clock timestamp without a time zone. Choose the
-historical time zone explicitly when calling `record.timestamp.date(in:)`.
-
-An initial direct BLE probe read firmware, battery, and 600 history records.
-Most positive timestamp gaps in that capture were about an hour. That does not
-establish sensor sampling frequency. The new decoder is also checked against
-that capture locally; no personal capture is distributed.
-
-The iOS transport includes Apple's system-connected peripheral lookup, which
-is useful when another app already holds a connection. **Concurrent vendor-app history requests interfered with acquisition in hardware
-testing; use exclusive reads.** Unattended/background sync and real-time
-measurement remain unverified. Two clients issuing the same command cannot be distinguished
-by this protocol; avoid simultaneous sync requests. macOS and iPhone may also
-compete for the ring's physical connection. No repeated polling or reconnection
-is started automatically.
-
-## Repository and contributions
-
-Device compatibility is tracked by **product + exact firmware + platform** in
-[the catalog](devices/README.md). The current verified firmware is `0.7.5.0`;
-newer firmware is not automatically considered compatible. Use
-`RingDeviceProfiles.matching(deviceID:firmware:)` for exact interpretation-profile
-selection; unknown pairs return nil. Raw FFF0 APIs remain explicitly selected.
-
-Protocol evidence and synthetic cross-language vectors live in `protocols/`;
-Apple sources/tests/examples live in `platforms/apple/`. Android has a
-[porting contract](platforms/android/README.md), but no implementation yet.
-The root Swift Package URL, library product and `import SmartRingKit` stay unchanged.
-
-See [CONTRIBUTING](CONTRIBUTING.md) for adding a device, firmware or platform and
-[architecture](docs/architecture.md) for the boundaries.
-
-## Development
-
-```sh
-swift test
-xcodebuild -scheme SmartRingKit -destination 'generic/platform=iOS' \
-  -derivedDataPath .local/ios-build CODE_SIGNING_ALLOWED=NO build
-```
-
-CI tests synthetic packet framing, calendar validation, read request encoding,
-limits, and cancellation/disconnected reads, and builds for iOS. Radio behavior
-requires hardware testing. See [the protocol notes](docs/protocol.md) for evidence,
-provenance, and the boundaries of current support.
+[Latest release](https://github.com/usedhonda/smart-ring-kit/releases/latest) ·
+[Changelog](CHANGELOG.md)
 
 ## License
 
-Original implementation: [MIT](LICENSE). Commercial/closed-source embedding is
-permitted with the required copyright/license notices. See [embedding and license
-notes](docs/licensing.md). Third-party SDK code is not included or relicensed by MIT.
+Original implementation, documentation and synthetic fixtures: [MIT](LICENSE).
+Commercial and closed-source embedding is permitted with the required notices.
+Read the [embedding and third-party reference notes](docs/licensing.md); this
+project's MIT license does not relicense a vendor's SDK, firmware or assets.
