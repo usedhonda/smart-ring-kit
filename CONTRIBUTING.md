@@ -18,6 +18,18 @@ Apple development needs Swift 6+; iOS compilation also needs Xcode and the iOS S
 Codec tests do not need a ring or Bluetooth permission. Use a branch for your work.
 The package root, product and module names remain stable despite platform folders.
 
+## Commit attribution
+
+Use your own name or handle and an email linked to your GitHub account. For email
+privacy, copy the no-reply address issued in your own GitHub email settings;
+`noreply@users.noreply.github.com` is not a generic anonymous address. Check
+`git var GIT_AUTHOR_IDENT` and `git var GIT_COMMITTER_IDENT` before committing.
+Add `Co-authored-by` only for actual co-authors, using an address they have confirmed.
+
+The root `.mailmap` corrects the early placeholder identity in Git tools that honor
+mailmaps. Stored commits and their IDs remain unchanged. GitHub's contributor
+sidebar is not guaranteed to reflect this mapping.
+
 ## Choose your contribution
 
 ### Another device
