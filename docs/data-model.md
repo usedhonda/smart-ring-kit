@@ -9,7 +9,7 @@ This is a supported-protocol inventory; undocumented/future commands are not cla
 ```swift
 let snapshot = try await RingHistoryReader.readAll(from: selectedPeripheralID) { capture in
     // Persist progress here if needed; this callback may throw on storage failure.
-    // capture.raw retains every notification, including failed/partial reads.
+    // capture.raw retains notifications within its byte budget, including partial reads.
     // capture.transferComplete / failure describe the transfer, not interpretation.
     // capture.decoded separates usable records, opaque records and parsing issues.
 }
@@ -27,8 +27,13 @@ global device serial/MAC; protect it along with the health data. Capture times
 describe a sequential acquisition, not an atomic measurement of every category.
 Unattempted categories have `startedAt: nil`.
 Per-history limits default to 2 MB and 120 seconds. The callback can persist each
-attempt before the next begins. Packet-level journaling is also possible through
-`RingClient.readRawHistory(_:onNotification:)`.
+attempt before the next begins. Invalid limits fail before Bluetooth initialization.
+Each snapshot capture stream retains complete notification boundaries within its
+own byte budget. A packet that would exceed that budget is omitted and the failure
+is recorded; a conflicting history still stops acquisition even if that packet
+cannot fit. Packet-level journaling is also possible through
+`RingClient.readRawHistory(_:onNotification:)`; custom callbacks manage their own
+storage limits and may synchronously call `disconnect()` to stop the read.
 
 ## Coverage
 
@@ -73,7 +78,7 @@ stream beyond that boundary themselves; dynamic heart rate really stalls there.
 A hardware attempt also stalled after 49 received notifications, so a received
 packet count cannot safely determine a page boundary. The client continues only
 after three seconds without another matching notification. A new packet cancels
-that timer. Total request timeout
+the pending continuation wait, including one already ready to resume. Total request timeout
 and byte/record limits still bound the transfer. This completed the previously
 partial heart-rate history. Erase mode 0x99 is never exposed.
 

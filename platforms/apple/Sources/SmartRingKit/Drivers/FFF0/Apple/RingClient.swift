@@ -32,7 +32,7 @@ public final class RingClient: NSObject, @preconcurrency CBCentralManagerDelegat
     private var rawHistory: RingRawHistoryDecoder?
     private var rawNotificationHandler: (@MainActor (Data) -> Void)?
     private var unexpectedNotificationHandler: (@MainActor (Data) -> Void)?
-    private var continuationTimer: Timer?
+    private var continuationTask: Task<Void, Never>?
 
     private enum Phase {
         case idle, discovery, connecting
@@ -120,11 +120,12 @@ public final class RingClient: NSObject, @preconcurrency CBCentralManagerDelegat
                                onNotification: (@MainActor (Data) -> Void)? = nil,
                                onUnexpectedNotification: (@MainActor (Data) -> Void)? = nil) async throws -> RingRawHistory {
         guard continuation == nil else { throw RingError.busy }
-        rawHistory = try RingRawHistoryDecoder(command: command, maxBytes: maxBytes)
-        rawNotificationHandler = onNotification
-        unexpectedNotificationHandler = onUnexpectedNotification
-        defer { rawNotificationHandler = nil; unexpectedNotificationHandler = nil }
-        guard case .raw(let result) = try await send(command, timeout: timeout, raw: true) else {
+        let decoder = try RingRawHistoryDecoder(command: command, maxBytes: maxBytes)
+        guard case .raw(let result) = try await send(command, timeout: timeout, raw: true, prepare: {
+            self.rawHistory = decoder
+            self.rawNotificationHandler = onNotification
+            self.unexpectedNotificationHandler = onUnexpectedNotification
+        }) else {
             throw RingError.invalidPacket("unexpected raw history response")
         }
         return result
@@ -137,10 +138,12 @@ public final class RingClient: NSObject, @preconcurrency CBCentralManagerDelegat
         return data
     }
 
-    private func send(_ command: RingReadCommand, timeout: TimeInterval, raw: Bool = false) async throws -> Response {
+    private func send(_ command: RingReadCommand, timeout: TimeInterval, raw: Bool = false,
+                      prepare: () -> Void = {}) async throws -> Response {
         guard let p = peripheral, p.state == .connected, let tx = writeCharacteristic,
               notifyCharacteristic?.isNotifying == true else { throw RingError.disconnected }
         return try await perform(timeout: timeout, phase: raw ? .rawHistory(command) : .request(command)) {
+            prepare()
             p.writeValue(command.packet, for: tx, type: .withResponse)
         }
     }
@@ -189,8 +192,13 @@ public final class RingClient: NSObject, @preconcurrency CBCentralManagerDelegat
     }
 
     private func finish(_ result: Result<Response, Error>) {
-        continuationTimer?.invalidate()
-        continuationTimer = nil
+        continuationTask?.cancel()
+        continuationTask = nil
+        // Clear operation-owned handlers before resuming the caller. A caller's
+        // deferred cleanup can otherwise erase handlers installed by a new read.
+        rawHistory = nil
+        rawNotificationHandler = nil
+        unexpectedNotificationHandler = nil
         let callback = continuation
         continuation = nil
         operationID = nil
@@ -286,15 +294,19 @@ public final class RingClient: NSObject, @preconcurrency CBCentralManagerDelegat
         if let error { fail(RingError.transport(error.localizedDescription)); return }
         guard let data = characteristic.value, !data.isEmpty else { return }
         if case .rawHistory(let command) = phase {
+            guard let id = operationID else { return }
             guard data.first == command.rawValue else {
                 unexpectedNotificationHandler?(data)
+                guard operationID == id else { return }
                 if let byte = data.first, RingReadCommand(rawValue: byte)?.isHistory == true {
                     fail(RingError.conflictingHistoryResponse(expected: command.rawValue, received: byte))
                 }
                 return
             }
-            continuationTimer?.invalidate()
+            continuationTask?.cancel()
             rawNotificationHandler?(data)
+            // Capture callbacks may synchronously cancel or disconnect this read.
+            guard operationID == id else { return }
             do {
                 guard rawHistory != nil else { throw RingError.invalidPacket("missing raw decoder") }
                 try rawHistory?.append(data)
@@ -304,7 +316,7 @@ public final class RingClient: NSObject, @preconcurrency CBCentralManagerDelegat
             return
         }
         guard case .request(let command) = phase else { return }
-        if data.first == command.rawValue { continuationTimer?.invalidate() }
+        if data.first == command.rawValue { continuationTask?.cancel() }
         // Other clients may receive/write on the same peripheral. Ignore other response types.
         guard data.first == command.rawValue else {
             if command.isHistory, let byte = data.first, RingReadCommand(rawValue: byte)?.isHistory == true {
@@ -342,13 +354,16 @@ public final class RingClient: NSObject, @preconcurrency CBCentralManagerDelegat
         guard let operationID else { return }
         // The sample uses 50 responses, but hardware may deliver 49 before stalling.
         // Continue only at an idle boundary, never count received packets as proof
-        // that the ring sent the whole page. Any next packet invalidates this timer.
-        continuationTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: false) { [weak self] _ in
-            Task { @MainActor in
-                guard let self, self.operationID == operationID,
-                      let p = self.peripheral, let tx = self.writeCharacteristic else { return }
-                p.writeValue(command.readPacket(continuing: true), for: tx, type: .withResponse)
-            }
+        // that the ring sent the whole page. Any next packet cancels this wait.
+        continuationTask?.cancel()
+        continuationTask = Task { @MainActor [weak self] in
+            do { try await Task.sleep(for: .seconds(3)) }
+            catch { return }
+            // Cancellation also covers a sleep that finished before a new packet
+            // arrived but whose main-actor continuation had not run yet.
+            guard !Task.isCancelled, let self, self.operationID == operationID,
+                  let p = self.peripheral, let tx = self.writeCharacteristic else { return }
+            p.writeValue(command.readPacket(continuing: true), for: tx, type: .withResponse)
         }
     }
 }

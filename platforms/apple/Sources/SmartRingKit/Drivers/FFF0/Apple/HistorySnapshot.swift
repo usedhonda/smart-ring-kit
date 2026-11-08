@@ -24,6 +24,48 @@ public struct RingHistorySnapshot: Codable, Sendable {
     public var histories: [RingHistoryCapture]
 }
 
+// Preserve packet boundaries, including malformed packets, without letting a
+// capture callback exceed the limit enforced by the raw history decoder.
+struct RingHistoryCaptureBuffer {
+    let command: RingReadCommand
+    let maxBytes: Int
+    private(set) var notifications: [[UInt8]] = []
+    private(set) var unexpectedNotifications: [[UInt8]] = []
+    private(set) var conflictingCommand: UInt8?
+    private(set) var limitFailure: String?
+    private var expectedBytes = 0
+    private var unexpectedBytes = 0
+
+    init(command: RingReadCommand, maxBytes: Int) {
+        self.command = command
+        self.maxBytes = maxBytes
+    }
+
+    mutating func append(_ data: Data) -> Bool {
+        if data.first == command.rawValue {
+            guard data.count <= maxBytes - expectedBytes else {
+                limitFailure = "History notification byte limit exceeded; partial capture preserved."
+                return false
+            }
+            notifications.append([UInt8](data))
+            expectedBytes += data.count
+        } else {
+            // Record a collision before the byte-limit callback can disconnect
+            // the client and replace its pending error with cancellation.
+            if let byte = data.first, RingReadCommand(rawValue: byte)?.isHistory == true {
+                conflictingCommand = byte
+            }
+            guard data.count <= maxBytes - unexpectedBytes else {
+                limitFailure = "Unexpected notification byte limit exceeded; partial capture preserved."
+                return false
+            }
+            unexpectedNotifications.append([UInt8](data))
+            unexpectedBytes += data.count
+        }
+        return true
+    }
+}
+
 #if canImport(CoreBluetooth)
 /// Reads all supported stored-history categories through separate connections.
 /// No measurements are started and no ring history is erased. Capture callbacks
@@ -33,6 +75,9 @@ public enum RingHistoryReader {
     public static func readAll(from peripheralID: UUID, timeoutPerHistory: TimeInterval = 120,
                                maxBytesPerHistory: Int = 2_000_000,
                                onCapture: (@MainActor (RingHistoryCapture) throws -> Void)? = nil) async throws -> RingHistorySnapshot {
+        guard timeoutPerHistory.isFinite, timeoutPerHistory > 0 else { throw RingError.timedOut }
+        guard maxBytesPerHistory > 0 else { throw RingError.invalidPacket("a positive byte limit is required") }
+        try Task.checkCancellation()
         let infoClient = RingClient()
         let info: RingInfo
         var clock: RingTimestamp?
@@ -51,10 +96,7 @@ public enum RingHistoryReader {
             try Task.checkCancellation()
             let client = RingClient()
             let started = Date()
-            var packets: [[UInt8]] = []
-            var unexpected: [[UInt8]] = []
-            var unexpectedBytes = 0
-            var unexpectedLimitReached = false
+            var buffer = RingHistoryCaptureBuffer(command: command, maxBytes: maxBytesPerHistory)
             var complete = false
             var failure: String?
             var collision = false
@@ -63,15 +105,9 @@ public enum RingHistoryReader {
                 try await client.connect(to: peripheralID)
                 _ = try await client.readRawHistory(command, timeout: timeoutPerHistory,
                                                     maxBytes: maxBytesPerHistory, onNotification: {
-                    packets.append([UInt8]($0))
+                    if !buffer.append($0) { client.disconnect() }
                 }, onUnexpectedNotification: {
-                    guard $0.count <= maxBytesPerHistory - unexpectedBytes else {
-                        unexpectedLimitReached = true
-                        client.disconnect()
-                        return
-                    }
-                    unexpected.append([UInt8]($0))
-                    unexpectedBytes += $0.count
+                    if !buffer.append($0) { client.disconnect() }
                 })
                 complete = true
             } catch {
@@ -79,10 +115,16 @@ public enum RingHistoryReader {
                 if let ringError = error as? RingError, case .conflictingHistoryResponse = ringError { collision = true }
             }
             client.disconnect()
-            if unexpectedLimitReached { failure = "Unexpected notification byte limit exceeded; partial capture preserved." }
-            let raw = RingRawHistory(command: command.rawValue, notifications: packets)
+            if let byte = buffer.conflictingCommand {
+                collision = true
+                failure = RingError.conflictingHistoryResponse(expected: command.rawValue, received: byte).localizedDescription
+            }
+            if let limitFailure = buffer.limitFailure {
+                failure = collision ? "\(failure ?? "Conflicting history response.") \(limitFailure)" : limitFailure
+            }
+            let raw = RingRawHistory(command: command.rawValue, notifications: buffer.notifications)
             let capture = RingHistoryCapture(peripheralID: peripheralID, command: command, attempted: true, startedAt: started, transferComplete: complete,
-                                             failure: failure, raw: raw, unexpectedNotifications: unexpected,
+                                             failure: failure, raw: raw, unexpectedNotifications: buffer.unexpectedNotifications,
                                              decoded: RingHistoryCodec.decode(raw))
             snapshot.histories.append(capture)
             try onCapture?(capture)
