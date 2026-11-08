@@ -99,6 +99,8 @@ live/metadata notifications are preserved without being parsed as the requested 
 
 ## Resume history from an existing record
 
+Available starting with version 0.5.0.
+
 ```swift
 // Use a timestamp from a previously persisted record of the same command.
 let raw = try await client.readRawHistory(.spotHeartRateHistory,
