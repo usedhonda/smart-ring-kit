@@ -73,12 +73,17 @@ public struct RingTimestamp: Codable, Equatable, Sendable {
     public let second: Int
 
     /// The caller must choose the time zone used when the ring recorded this value.
+    /// Invalid dates and wall-clock times skipped by a daylight-saving change return nil.
     public func date(in timeZone: TimeZone) -> Date? {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = timeZone
-        return calendar.date(from: DateComponents(
+        guard let date = calendar.date(from: DateComponents(
             year: year, month: month, day: day, hour: hour, minute: minute, second: second
-        ))
+        )) else { return nil }
+        let parts = calendar.dateComponents([.year, .month, .day, .hour, .minute, .second], from: date)
+        guard parts.year == year, parts.month == month, parts.day == day,
+              parts.hour == hour, parts.minute == minute, parts.second == second else { return nil }
+        return date
     }
 }
 
@@ -129,15 +134,8 @@ public enum RingPacketDecoder {
         }
         let t = try RingTimestamp(year: 2000 + bcd(b[0]), month: bcd(b[1]), day: bcd(b[2]),
                                   hour: bcd(b[3]), minute: bcd(b[4]), second: bcd(b[5]))
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
-        guard let date = t.date(in: calendar.timeZone) else {
+        guard t.date(in: TimeZone(secondsFromGMT: 0)!) != nil else {
             throw RingError.invalidPacket("invalid calendar date")
-        }
-        let parts = calendar.dateComponents([.year, .month, .day, .hour, .minute, .second], from: date)
-        guard parts.year == t.year, parts.month == t.month, parts.day == t.day,
-              parts.hour == t.hour, parts.minute == t.minute, parts.second == t.second else {
-            throw RingError.invalidPacket("out-of-range timestamp")
         }
         return t
     }

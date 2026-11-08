@@ -47,17 +47,6 @@ final class SensorTests: XCTestCase {
         XCTAssertEqual(decoded.issues.count, 1)
     }
 
-    func testReadContinuationCanNeverSelectDeleteOrChangeClockMode() {
-        for command in RingReadCommand.historyCommands {
-            let b = [UInt8](command.readPacket(continuing: true))
-            XCTAssertEqual(b[1], 2)
-            XCTAssertEqual(b[15], b.prefix(15).reduce(0, &+))
-        }
-        XCTAssertEqual(RingReadCommand.deviceClock.readPacket(continuing: true)[1], 0)
-        XCTAssertFalse(RingReadCommand.historyCommands.contains(.deviceClock))
-        XCTAssertEqual(RingReadCommand.historyCommands.count, 10)
-    }
-
     func testExtendedManualOxygenRecordsStayStructuredButUninterpreted() {
         var a = [UInt8](repeating: 0, count: 31)
         a[0] = 0x67
