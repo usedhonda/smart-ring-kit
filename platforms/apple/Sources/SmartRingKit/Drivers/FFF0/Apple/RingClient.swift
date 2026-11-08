@@ -33,6 +33,7 @@ public final class RingClient: NSObject, @preconcurrency CBCentralManagerDelegat
     private var rawNotificationHandler: (@MainActor (Data) -> Void)?
     private var unexpectedNotificationHandler: (@MainActor (Data) -> Void)?
     private var continuationTask: Task<Void, Never>?
+    private var continuationPacket: Data?
 
     private enum Phase {
         case idle, discovery, connecting
@@ -85,13 +86,15 @@ public final class RingClient: NSObject, @preconcurrency CBCentralManagerDelegat
         return try RingPacketDecoder.timestamp(Array(data.dropFirst().prefix(6)))
     }
 
-    /// Read all currently available HRV records. Never deletes or acknowledges deletion.
+    /// Read available HRV records, optionally resuming from an existing record timestamp.
+    /// An unmatched timestamp may return all history; deduplicate returned records.
+    /// Never deletes or acknowledges deletion.
     /// Timeouts/errors disconnect the local client so a late response cannot pollute a retry.
-    public func readHRVHistory(timeout: TimeInterval = 40, maxRecords: Int = 10_000) async throws -> [RingHRVRecord] {
+    public func readHRVHistory(resumingFrom: RingTimestamp? = nil, timeout: TimeInterval = 40, maxRecords: Int = 10_000) async throws -> [RingHRVRecord] {
         guard continuation == nil else { throw RingError.busy }
         guard maxRecords > 0 else { throw RingError.recordLimitExceeded }
         history = RingHistoryDecoder(maxRecords: maxRecords)
-        guard case .history(let records) = try await send(.hrvHistory, timeout: timeout) else {
+        guard case .history(let records) = try await send(.hrvHistory, timeout: timeout, resumingFrom: resumingFrom) else {
             throw RingError.invalidPacket("unexpected response")
         }
         return records
@@ -114,14 +117,17 @@ public final class RingClient: NSObject, @preconcurrency CBCentralManagerDelegat
     }
 
     /// Probe a supported read-only history command without inventing field semantics.
+    /// `resumingFrom` is supported for spot heart rate, HRV and temperature only.
+    /// Use an existing record timestamp, not an arbitrary cutoff; unmatched hints may return all history.
+    /// Nil preserves the original all-retained-history request.
     /// Completes on the SDK-style command/0xff marker, with idle-aware read continuation.
-    public func readRawHistory(_ command: RingReadCommand, timeout: TimeInterval = 40,
+    public func readRawHistory(_ command: RingReadCommand, resumingFrom: RingTimestamp? = nil, timeout: TimeInterval = 40,
                                maxBytes: Int = 2_000_000,
                                onNotification: (@MainActor (Data) -> Void)? = nil,
                                onUnexpectedNotification: (@MainActor (Data) -> Void)? = nil) async throws -> RingRawHistory {
         guard continuation == nil else { throw RingError.busy }
         let decoder = try RingRawHistoryDecoder(command: command, maxBytes: maxBytes)
-        guard case .raw(let result) = try await send(command, timeout: timeout, raw: true, prepare: {
+        guard case .raw(let result) = try await send(command, timeout: timeout, raw: true, resumingFrom: resumingFrom, prepare: {
             self.rawHistory = decoder
             self.rawNotificationHandler = onNotification
             self.unexpectedNotificationHandler = onUnexpectedNotification
@@ -139,12 +145,23 @@ public final class RingClient: NSObject, @preconcurrency CBCentralManagerDelegat
     }
 
     private func send(_ command: RingReadCommand, timeout: TimeInterval, raw: Bool = false,
+                      resumingFrom: RingTimestamp? = nil,
                       prepare: () -> Void = {}) async throws -> Response {
+        let initialPacket: Data
+        let nextPacket: Data
+        if let resumingFrom {
+            initialPacket = try command.historyRequest(resumingFrom: resumingFrom)
+            nextPacket = try command.readPacket(continuing: true, resumingFrom: resumingFrom)
+        } else {
+            initialPacket = command.packet
+            nextPacket = command.readPacket(continuing: true)
+        }
         guard let p = peripheral, p.state == .connected, let tx = writeCharacteristic,
               notifyCharacteristic?.isNotifying == true else { throw RingError.disconnected }
         return try await perform(timeout: timeout, phase: raw ? .rawHistory(command) : .request(command)) {
             prepare()
-            p.writeValue(command.packet, for: tx, type: .withResponse)
+            self.continuationPacket = nextPacket
+            p.writeValue(initialPacket, for: tx, type: .withResponse)
         }
     }
 
@@ -194,6 +211,7 @@ public final class RingClient: NSObject, @preconcurrency CBCentralManagerDelegat
     private func finish(_ result: Result<Response, Error>) {
         continuationTask?.cancel()
         continuationTask = nil
+        continuationPacket = nil
         // Clear operation-owned handlers before resuming the caller. A caller's
         // deferred cleanup can otherwise erase handlers installed by a new read.
         rawHistory = nil
@@ -362,8 +380,9 @@ public final class RingClient: NSObject, @preconcurrency CBCentralManagerDelegat
             // Cancellation also covers a sleep that finished before a new packet
             // arrived but whose main-actor continuation had not run yet.
             guard !Task.isCancelled, let self, self.operationID == operationID,
-                  let p = self.peripheral, let tx = self.writeCharacteristic else { return }
-            p.writeValue(command.readPacket(continuing: true), for: tx, type: .withResponse)
+                  let p = self.peripheral, let tx = self.writeCharacteristic,
+                  let packet = self.continuationPacket else { return }
+            p.writeValue(packet, for: tx, type: .withResponse)
         }
     }
 }

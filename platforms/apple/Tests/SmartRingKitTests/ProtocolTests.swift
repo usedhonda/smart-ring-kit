@@ -21,6 +21,31 @@ final class ProtocolTests: XCTestCase {
         XCTAssertEqual(RingReadCommand.historyCommands.count, 10)
     }
 
+    func testBoundedHistoryPacketsKeepBCDDateAcrossContinuation() throws {
+        let start = RingTimestamp(year: 2024, month: 2, day: 29, hour: 13, minute: 45, second: 6)
+        for command in [RingReadCommand.spotHeartRateHistory, .hrvHistory, .temperatureHistory] {
+            let initial = [UInt8](try command.historyRequest(resumingFrom: start))
+            let next = [UInt8](try command.readPacket(continuing: true, resumingFrom: start))
+            XCTAssertEqual(Array(initial[4...9]), [0x24, 0x02, 0x29, 0x13, 0x45, 0x06])
+            XCTAssertEqual(initial[1], 0)
+            XCTAssertEqual(next[1], 2)
+            XCTAssertEqual(Array(initial[2...14]), Array(next[2...14]))
+            for packet in [initial, next] {
+                XCTAssertEqual(packet[0], command.rawValue)
+                XCTAssertEqual(packet[15], packet.prefix(15).reduce(0, &+))
+            }
+        }
+        XCTAssertThrowsError(try RingReadCommand.firmware.historyRequest(resumingFrom: start))
+        XCTAssertThrowsError(try RingReadCommand.sleepHistory.historyRequest(resumingFrom: start))
+        for invalid in [
+            RingTimestamp(year: 2100, month: 1, day: 1, hour: 0, minute: 0, second: 0),
+            RingTimestamp(year: 2023, month: 2, day: 29, hour: 0, minute: 0, second: 0),
+            RingTimestamp(year: 2024, month: 1, day: 1, hour: -1, minute: 0, second: 0)
+        ] {
+            XCTAssertThrowsError(try RingReadCommand.hrvHistory.historyRequest(resumingFrom: invalid))
+        }
+    }
+
     func testDeviceInfoDecodesAndRejectsCorruption() throws {
         XCTAssertEqual(try RingPacketDecoder.firmware(Data([0x27, 0, 7, 5, 0])), "0.7.5.0")
         XCTAssertEqual(try RingPacketDecoder.battery(Data([0x13, 85])), 85)

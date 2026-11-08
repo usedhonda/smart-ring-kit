@@ -28,7 +28,7 @@ for evidence and field-level limitations.
 The current FFF0 implementation reads firmware, battery, device clock and ten
 stored-history categories:
 
-- HRV/stress, dynamic heart rate and spot heart rate.
+- Raw HRV/fatigue (legacy `stressRaw`), dynamic heart rate and spot heart rate.
 - Sleep categories, with an explicitly selected deep/light/REM/awake profile.
 - Temperature, automatic oxygen and manual oxygen.
 - Detailed activity, daily activity and exercise.
@@ -40,6 +40,9 @@ Manual oxygen's observed 31-byte records remain opaque; some units are unknown.
 Exercise returned an empty history on hardware, so nonempty decoding remains
 hardware-unverified. Sleep-stage totals matched the vendor app on two nights;
 unknown codes, conflicts and missing coverage remain visible. No score is invented.
+Timestamp resume hints are available for spot heart rate, HRV and ordinary
+temperature; unmatched hints may return all retained history. The vendor app's finer-grained stress score is not decoded;
+see [stress evidence and ingestion timing](docs/stress-and-ingestion.md).
 See the [data contract](docs/data-model.md) for details.
 
 All implemented device requests are read-only. The toolkit does not configure
