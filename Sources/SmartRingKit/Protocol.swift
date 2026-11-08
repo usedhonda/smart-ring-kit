@@ -4,6 +4,7 @@ public enum RingError: Error, LocalizedError, Equatable {
     case busy, disconnected, cancelled, timedOut, bluetoothUnavailable
     case unsupportedDevice, invalidPacket(String), recordLimitExceeded
     case transport(String)
+    case conflictingHistoryResponse(expected: UInt8, received: UInt8)
 
     public var errorDescription: String? {
         switch self {
@@ -16,13 +17,15 @@ public enum RingError: Error, LocalizedError, Equatable {
         case .invalidPacket(let reason): return "Invalid ring packet: \(reason)"
         case .recordLimitExceeded: return "The history exceeded the configured record limit."
         case .transport(let reason): return "Bluetooth error: \(reason)"
+        case .conflictingHistoryResponse(let expected, let received):
+            return "Received history \(received) while reading \(expected). Another reader may be active; pause other ring sync clients before retrying."
         }
     }
 }
 
 /// Non-destructive requests. Sleep and other additional histories are based on
 /// the reference SDK; hardware support must be verified per device/firmware.
-public enum RingReadCommand: UInt8, Sendable {
+public enum RingReadCommand: UInt8, Sendable, CaseIterable, Codable {
     case firmware = 0x27
     case battery = 0x13
     case hrvHistory = 0x56
@@ -32,12 +35,23 @@ public enum RingReadCommand: UInt8, Sendable {
     case oxygenHistory = 0x66
     case activityHistory = 0x52
     case dailyActivityHistory = 0x51
+    case spotHeartRateHistory = 0x55
+    case manualOxygenHistory = 0x67
+    case exerciseHistory = 0x5c
+    case deviceClock = 0x41
 
-    var isHistory: Bool { self != .firmware && self != .battery }
+    var isHistory: Bool { self != .firmware && self != .battery && self != .deviceClock }
+
+    public static var historyCommands: [RingReadCommand] { allCases.filter(\.isHistory) }
 
     public var packet: Data {
+        readPacket(continuing: false)
+    }
+
+    func readPacket(continuing: Bool) -> Data {
         var bytes = [UInt8](repeating: 0, count: 16)
         bytes[0] = rawValue
+        bytes[1] = continuing && isHistory ? 2 : 0
         // History mode 0x00 requests existing records. No delete/configuration API.
         bytes[15] = bytes.prefix(15).reduce(0, &+)
         return Data(bytes)

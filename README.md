@@ -6,8 +6,13 @@ The initial experimental driver targets the FFF0 protocol observed on the
 app and can be embedded in an iOS or macOS app.
 
 **Early experimental release.** One ring with firmware `0.7.5.0` has been used
-to verify firmware, battery, HRV and sleep read protocols. Other models and firmware versions are unverified.
+to verify metadata and all ten supported stored-history transfers. Other models and firmware versions are unverified.
 This is an unofficial project, unaffiliated with issin or J-Style.
+
+**0.3.0:** [Read all ten stored-history categories](docs/data-model.md) in one
+call, with original data, structured records and per-category completion/errors.
+Sleep classification is available through an explicit device/firmware profile
+checked against the vendor app on two nights. Unmapped codes and fields stay visible.
 
 ## What works
 
@@ -16,7 +21,9 @@ This is an unofficial project, unaffiliated with issin or J-Style.
 - Read existing HRV history, including SDK-labelled HRV, heart rate, and stress values.
 - Decode saved notification packets offline and export structured JSON through a CLI.
 - Experimental sleep-history reads with one-minute/five-minute raw category arrays.
-- Raw history probes for SDK-defined heart-rate, temperature, oxygen and activity commands.
+- One-call acquisition of all ten stored histories, with typed decoding where established.
+- Sleep timelines and stage durations with overlap, missingness and unknown codes visible.
+- Raw data, opaque records and counter-gap diagnostics retained for further interpretation.
 - Cancel an operation, enforce timeouts and record limits, and disconnect on transfer errors.
 
 The implementation sends read-only requests. It does not change firmware,
@@ -26,14 +33,14 @@ It has no third-party package dependencies.
 ## Requirements and installation
 
 Swift 6.0+, iOS 16+ or macOS 13+. Add this repository using Xcode's
-**File → Add Package Dependencies**, select version `0.1.0` or later, and link
+**File → Add Package Dependencies**, select version `0.3.0` or later, and link
 the **SmartRingKit** library product. Only add the library product to an iOS app;
 the `smart-ring` executable is a separate developer tool.
 
 In Package.swift:
 
 ```swift
-.package(url: "https://github.com/usedhonda/smart-ring-kit.git", from: "0.1.0")
+.package(url: "https://github.com/usedhonda/smart-ring-kit.git", from: "0.3.0")
 // Target dependency:
 .product(name: "SmartRingKit", package: "smart-ring-kit")
 ```
@@ -76,7 +83,9 @@ without its terminator fails rather than returning a supposedly complete set.
 
 Sleep support (0.2.0+) is experimental. Use `try await client.readSleepHistory()`
 for SDK-layout sleep records. `categoryValues` are deliberately unlabelled:
-REM/deep/light/awake mappings and equivalence to the official app are unknown.
+For firmware 0.7.5.0, the explicitly selected `.issinFirmware0750` analysis
+profile maps deep/light/REM/awake; its stage totals matched two vendor-app nights.
+Other mappings and full app-analysis equivalence remain unverified.
 `sampleIntervalMinutes` preserves the SDK's one-minute or five-minute layout.
 No sleep score, session aggregation or inferred HealthKit sleep stages are generated.
 
@@ -89,14 +98,16 @@ included. The five-minute layout is covered by synthetic tests only.
 For protocol research, `try await client.readRawHistory(.temperatureHistory)`
 returns bounded, uninterpreted notification bytes. Other supported history kinds
 are `.sleepHistory`, `.heartRateHistory`, `.oxygenHistory`, `.activityHistory`,
-`.dailyActivityHistory` and `.hrvHistory`. An optional `onNotification` callback
+`.dailyActivityHistory`, `.spotHeartRateHistory`, `.manualOxygenHistory`,
+`.exerciseHistory` and `.hrvHistory`. An optional `onNotification` callback
 can preserve partial responses when a transfer later times out. The callback
-receives sensitive data; do not log it publicly. Additional device support,
-metric interpretation and transfers requiring pagination remain unverified.
+receives sensitive data; do not log it publicly. Additional device support and
+some metric interpretations remain unverified.
 Fresh iOS connections completed raw temperature, oxygen, detailed-activity and
-daily-activity transfers on the same ring. Their field decoding is not yet
-implemented. Dynamic heart-rate history stopped after 50 notifications without
-an end marker and remains incomplete; it is not advertised as a successful read.
+daily-activity transfers on the same ring. Version 0.3.0 decodes supported sensor
+layouts and adds idle-aware continuation, completing dynamic/spot heart rate and
+manual oxygen too. Unknown temperature extensions and the manual-oxygen 31-byte
+format remain preserved without guessed meanings. See [data models](docs/data-model.md).
 
 On macOS, use the wrapper so the executable contains a Bluetooth purpose string:
 
@@ -106,6 +117,7 @@ bash scripts/smart-ring info --id <uuid-from-scan>
 bash scripts/smart-ring history --id <uuid-from-scan>
 bash scripts/smart-ring sleep --id <uuid-from-scan>
 bash scripts/smart-ring raw-temperature --id <uuid-from-scan>
+bash scripts/smart-ring capture --id <uuid-from-scan> --output ./private-captures
 ```
 
 Bluetooth permission may be attributed to the terminal/hosting application.
@@ -120,8 +132,9 @@ swift run smart-ring decode-history packets.hex
 swift run smart-ring decode-sleep sleep-packets.hex
 ```
 
-History output contains health data. The library does not store or upload it;
-the CLI writes it to stdout only. Protect any files you redirect it into and
+History output contains health data. The library does not store or upload it.
+The CLI prints JSON or writes private files with the explicit `capture` command.
+Protect these files and
 do not attach personal captures to public issues. Tests use synthetic data.
 
 ## Data meaning and current limits
@@ -142,9 +155,9 @@ establish sensor sampling frequency. The new decoder is also checked against
 that capture locally; no personal capture is distributed.
 
 The iOS transport includes Apple's system-connected peripheral lookup, which
-is useful when another app already holds a connection. **Concurrent reads with
-the vendor app, unattended/background sync, and real-time measurement have not
-been verified.** Two clients issuing the same command cannot be distinguished
+is useful when another app already holds a connection. **Concurrent vendor-app history requests interfered with acquisition in hardware
+testing; use exclusive reads.** Unattended/background sync and real-time
+measurement remain unverified. Two clients issuing the same command cannot be distinguished
 by this protocol; avoid simultaneous sync requests. macOS and iPhone may also
 compete for the ring's physical connection. No repeated polling or reconnection
 is started automatically.
