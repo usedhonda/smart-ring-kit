@@ -93,12 +93,15 @@ purpose string. Bluetooth permission may be attributed to the terminal/host app.
 bash scripts/smart-ring scan
 bash scripts/smart-ring info --id <uuid-from-scan>
 bash scripts/smart-ring all --id <uuid-from-scan>
-bash scripts/smart-ring capture --id <uuid-from-scan> --output ./private-captures
+bash scripts/smart-ring capture --id <uuid-from-scan> --output .local/private-captures
 ```
 
 `all` prints a snapshot; `capture` writes per-category results and a final snapshot
 in a unique private directory. The library itself does not store or upload data.
-Keep these files private and do not attach personal captures to public issues.
+Keep captures under the ignored `.local/` directory. The generated `ring-capture-*`
+directories and the older `private-captures/` example path are also ignored to
+reduce accidental commits. Renamed files and redirected CLI output still need
+an ignored/private destination. Do not attach personal captures to public issues.
 
 Offline commands need no ring or Bluetooth permission:
 
