@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Exclude the current heart-rate observation from its own descriptive reference, including when evaluation occurs after the observation.
+- Include the overlapping portion of completed sleep samples at a historical window boundary while excluding samples still in progress at evaluation.
+
 ## 0.7.0 — 2026-11-08
 
 - Add an experimental native-fatigue predictor with explicit carry, regression, residual and learned-decay modes; no pretrained weights or psychological-stress validation.

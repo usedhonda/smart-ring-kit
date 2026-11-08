@@ -17,17 +17,20 @@ final class StressInputTests: XCTestCase {
     }
 
     func testFutureRecordsNeverReplaceCurrentAndReferenceExcludesCurrent() throws {
-        let at = stamp(30).date(in: zone)!
-        let result = try RingStressInputs.assemble([history([heart(0, 60), heart(10, 70), heart(20, 80), heart(30, 90), heart(40, 200)])],
-            at: at, timeZone: zone, maximumAge: 60,
-            referenceWindow: DateInterval(start: stamp(0).date(in: zone)!, end: at))
-        let current = try XCTUnwrap(result.contexts.first)
-        XCTAssertEqual(current.records.first?.measurements.first?.value, 90)
-        XCTAssertEqual(result.heartRateReference?.sampleCount, 3)
-        XCTAssertEqual(result.heartRateReference?.medianBPM, 70)
-        XCTAssertEqual(result.heartRateReference?.medianAbsoluteDeviationBPM, 10)
-        XCTAssertEqual(result.heartRateReference?.normalizedDifference, 2)
-        XCTAssertFalse(result.transferCompletenessKnown)
+        let h = history([heart(0, 60), heart(10, 70), heart(20, 80), heart(30, 90), heart(40, 200)])
+        for minute in [30, 31] {
+            let at = stamp(minute).date(in: zone)!
+            let result = try RingStressInputs.assemble([h], at: at, timeZone: zone, maximumAge: 60,
+                referenceWindow: DateInterval(start: stamp(0).date(in: zone)!, end: at))
+            let current = try XCTUnwrap(result.contexts.first)
+            XCTAssertEqual(current.records.first?.measurements.first?.value, 90)
+            XCTAssertEqual(result.heartRateReference?.sampleCount, 3)
+            XCTAssertEqual(result.heartRateReference?.medianBPM, 70)
+            XCTAssertEqual(result.heartRateReference?.medianAbsoluteDeviationBPM, 10)
+            XCTAssertEqual(result.heartRateReference?.currentDifferenceBPM, 20)
+            XCTAssertEqual(result.heartRateReference?.normalizedDifference, 2)
+            XCTAssertFalse(result.transferCompletenessKnown)
+        }
     }
 
     func testChangedCountersDeduplicateButLatestConflictCannotBecomeScoreInput() throws {
@@ -49,11 +52,12 @@ final class StressInputTests: XCTestCase {
         XCTAssertEqual(result.contexts.first?.withinAgeLimit, false)
         XCTAssertFalse(result.missingCommands.contains(0x55))
         XCTAssertTrue(result.missingCommands.contains(0x56))
+        XCTAssertEqual(result.heartRateReference?.sampleCount, 2)
         XCTAssertNil(result.heartRateReference?.currentDifferenceBPM)
         XCTAssertNil(result.heartRateReference?.normalizedDifference)
     }
 
-    func testExplicitSleepWindowClipsFutureStagesAndKeepsUnknowns() throws {
+    func testExplicitSleepWindowClipsCompletedStagesAndKeepsUnknowns() throws {
         let at = stamp(2).date(in: zone)!
         var h = RingDecodedHistory(command: 0x53)
         h.sleep = [RingSleepRecord(timestamp: stamp(0), sampleIntervalMinutes: 1,
@@ -68,6 +72,24 @@ final class StressInputTests: XCTestCase {
             sleepWindow: DateInterval(start: stamp(0).date(in: zone)!, end: at)))
         XCTAssertThrowsError(try RingStressInputs.assemble([h], at: at, timeZone: zone, maximumAge: 60,
             referenceWindow: DateInterval(start: at, end: at.addingTimeInterval(60))))
+
+        let pastWindow = DateInterval(start: stamp(0).date(in: zone)!.addingTimeInterval(30),
+                                      end: stamp(1).date(in: zone)!.addingTimeInterval(30))
+        let past = try RingStressInputs.assemble([h], at: at, timeZone: zone, maximumAge: 60,
+            sleepWindow: pastWindow, sleepMapping: .issinFirmware0750)
+        XCTAssertEqual(past.sleep?.durations.first { $0.stage == .deep }?.seconds, 30)
+        XCTAssertEqual(past.sleep?.durations.first { $0.stage == .unknown }?.seconds, 30)
+
+        h.sleep = [RingSleepRecord(timestamp: stamp(0), sampleIntervalMinutes: 5,
+                                  categoryValues: [1, 3], rawBytes: [])]
+        let window = DateInterval(start: stamp(2).date(in: zone)!, end: stamp(7).date(in: zone)!)
+        for (minute, remSeconds) in [(7, 0.0), (10, 120.0)] {
+            let clipped = try RingStressInputs.assemble([h], at: stamp(minute).date(in: zone)!,
+                timeZone: zone, maximumAge: 60, sleepWindow: window, sleepMapping: .issinFirmware0750)
+            XCTAssertEqual(clipped.sleep?.durations.first { $0.stage == .deep }?.seconds, 180)
+            XCTAssertEqual(clipped.sleep?.durations.first { $0.stage == .rem }?.seconds, remSeconds)
+            XCTAssertTrue(try XCTUnwrap(clipped.sleep).intervals.allSatisfy { $0.start >= window.start && $0.end <= window.end })
+        }
     }
 
     func testUnknownUnitsAndSamplingIntervalsSurviveAssembly() throws {
