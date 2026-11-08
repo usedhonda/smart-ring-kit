@@ -104,7 +104,14 @@ public enum RingStressInputs {
         }
         var reference: RingHeartRateReference?
         if let window = referenceWindow {
-            let rows = (groups[0x55] ?? [:]).filter { $0.key >= window.start && $0.key < window.end }
+            let current = contexts.first { $0.command == 0x55 }
+            let value = current.flatMap { $0.withinAgeLimit && !$0.isConflicting ? heartRate($0.records[0]) : nil }
+            // A fresh current sample can precede evaluation and fall inside the reference window.
+            // Keep that comparison target out of its own baseline.
+            let comparisonTime = value == nil ? nil : current?.recordedAt
+            let rows = (groups[0x55] ?? [:]).filter {
+                $0.key >= window.start && $0.key < window.end && $0.key != comparisonTime
+            }
             let values = rows.values.compactMap { records -> Double? in
                 guard records.count == 1 else { return nil }
                 return heartRate(records[0])
@@ -112,8 +119,6 @@ public enum RingStressInputs {
             if !values.isEmpty {
                 let center = median(values)
                 let dispersion = median(values.map { abs($0 - center) })
-                let current = contexts.first { $0.command == 0x55 }
-                let value = current.flatMap { $0.withinAgeLimit && !$0.isConflicting ? heartRate($0.records[0]) : nil }
                 let difference = value.map { $0 - center }
                 reference = RingHeartRateReference(method: "median-mad-v1", window: window,
                     sampleCount: values.count,
@@ -125,15 +130,15 @@ public enum RingStressInputs {
         }
         let sleep: RingSleepAnalysis?
         if let window = sleepWindow, let mapping = sleepMapping {
-            // Exclude future blocks before analysis, and clip interpreted output to the window.
-            // In particular, future values cannot introduce conflicts into a past window.
+            // Only samples completed by evaluation are available. The analyzer then clips
+            // their overlap to the window, including samples crossing its end boundary.
             var records: [RingSleepRecord] = []
             for r in histories.flatMap(\.sleep) {
                 guard let start = r.timestamp.date(in: timeZone), [1, 5].contains(r.sampleIntervalMinutes) else {
                     throw RingError.invalidPacket("stress-input sleep clock or interval")
                 }
                 let alignedStart = floor(start.timeIntervalSince1970 / 60) * 60
-                let completed = floor((window.end.timeIntervalSince1970 - alignedStart) / Double(r.sampleIntervalMinutes * 60))
+                let completed = floor((at.timeIntervalSince1970 - alignedStart) / Double(r.sampleIntervalMinutes * 60))
                 let count = Int(min(Double(r.categoryValues.count), max(0, completed)))
                 guard count > 0 else { continue }
                 records.append(RingSleepRecord(timestamp: r.timestamp, sampleIntervalMinutes: r.sampleIntervalMinutes,
