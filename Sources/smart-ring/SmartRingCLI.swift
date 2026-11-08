@@ -23,15 +23,35 @@ struct SmartRingCLI {
             smart-ring history --id <peripheral-uuid>
             smart-ring sleep --id <peripheral-uuid>
             smart-ring raw-<kind> --id <peripheral-uuid>
+            smart-ring all --id <peripheral-uuid>
+            smart-ring capture --id <peripheral-uuid> --output <directory>
             smart-ring decode-history <hex-packets-file>
             smart-ring decode-sleep <hex-packets-file>
+            smart-ring decode-raw <raw-history.json>
+            smart-ring analyze-sleep <raw-history.json> --time-zone <identifier> --profile issin-0.7.5.0
 
             Raw kinds: sleep, heart-rate, temperature, oxygen, activity, daily-activity.
+                       spot-heart-rate, manual-oxygen, exercise.
 
             scan runs for 8 seconds. History prints sensitive health data as JSON.
             decode-history reads one hex notification per line, without Bluetooth.
             Bluetooth commands require macOS and Bluetooth permission. See README.
             """)
+            return
+        }
+        if args.count == 2, args[0] == "decode-raw" {
+            let raw = try JSONDecoder().decode(RingRawHistory.self, from: Data(contentsOf: URL(fileURLWithPath: args[1])))
+            try output(RingHistoryCodec.decode(raw))
+            return
+        }
+        if args.count == 6, args[0] == "analyze-sleep", args[2] == "--time-zone", args[4] == "--profile",
+           args[5] == "issin-0.7.5.0", let zone = TimeZone(identifier: args[3]) {
+            let raw = try JSONDecoder().decode(RingRawHistory.self, from: Data(contentsOf: URL(fileURLWithPath: args[1])))
+            guard raw.command == RingReadCommand.sleepHistory.rawValue else { throw RingError.invalidPacket("expected sleep history") }
+            var parser = RingSleepHistoryDecoder()
+            for bytes in raw.notifications { try parser.append(Data(bytes)) }
+            guard parser.isComplete else { throw RingError.invalidPacket("sleep input has no transfer terminator") }
+            try output(RingSleepAnalyzer.analyze(parser.records, timeZone: zone, mapping: .issinFirmware0750))
             return
         }
         if args.count == 2, ["decode-history", "decode-sleep"].contains(args[0]) {
@@ -66,6 +86,24 @@ struct SmartRingCLI {
             return
         }
         #if os(macOS)
+        if args.count == 5, args[0] == "capture", args[1] == "--id", args[3] == "--output",
+           let id = UUID(uuidString: args[2]) {
+            let folder = URL(fileURLWithPath: args[4], isDirectory: true)
+                .appendingPathComponent("ring-capture-\(UUID().uuidString.lowercased())", isDirectory: true)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            func save<T: Encodable>(_ value: T, _ name: String) throws {
+                let data = try encoder().encode(value)
+                let url = folder.appendingPathComponent(name)
+                try data.write(to: url, options: .atomic)
+                try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+            }
+            let snapshot = try await RingHistoryReader.readAll(from: id, onCapture: {
+                try save($0, String(format: "history-%02x.json", $0.command.rawValue))
+            })
+            try save(snapshot, "snapshot.json")
+            print(folder.path)
+            return
+        }
         let client = RingClient()
         defer { client.disconnect() }
         if args == ["scan"] {
@@ -75,12 +113,15 @@ struct SmartRingCLI {
         let rawKinds: [String: RingReadCommand] = [
             "raw-sleep": .sleepHistory, "raw-heart-rate": .heartRateHistory,
             "raw-temperature": .temperatureHistory, "raw-oxygen": .oxygenHistory,
-            "raw-activity": .activityHistory, "raw-daily-activity": .dailyActivityHistory
+            "raw-activity": .activityHistory, "raw-daily-activity": .dailyActivityHistory,
+            "raw-spot-heart-rate": .spotHeartRateHistory, "raw-manual-oxygen": .manualOxygenHistory,
+            "raw-exercise": .exerciseHistory
         ]
-        guard args.count == 3, ["info", "history", "sleep"].contains(args[0]) || rawKinds[args[0]] != nil,
+        guard args.count == 3, ["info", "history", "sleep", "all"].contains(args[0]) || rawKinds[args[0]] != nil,
               args[1] == "--id", let id = UUID(uuidString: args[2]) else {
             throw RingError.invalidPacket("invalid arguments; run smart-ring --help")
         }
+        if args[0] == "all" { try output(await RingHistoryReader.readAll(from: id)); return }
         // Wait for Bluetooth initialization and include already system-connected devices.
         _ = try await client.discover(duration: 2)
         try await client.connect(to: id)
@@ -94,9 +135,14 @@ struct SmartRingCLI {
     }
 
     private static func output<T: Encodable>(_ value: T) throws {
+        FileHandle.standardOutput.write(try encoder().encode(value))
+        FileHandle.standardOutput.write(Data([0x0a]))
+    }
+
+    private static func encoder() -> JSONEncoder {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        FileHandle.standardOutput.write(try encoder.encode(value))
-        FileHandle.standardOutput.write(Data([0x0a]))
+        encoder.dateEncodingStrategy = .iso8601
+        return encoder
     }
 }

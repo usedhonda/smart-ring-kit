@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.0 — 2026-11-08
+
+- Read all ten stored-history categories in one call with raw data, decoded records and per-category failures.
+- Complete dynamic heart-rate pagination using idle-aware read-only continuation.
+- Decode supported heart-rate, oxygen, temperature, activity and exercise layouts.
+- Preserve unknown 31-byte manual-oxygen records and unknown units without fabricating values.
+- Add an explicit firmware-specific deep/light/REM/awake mapping, checked against two vendor-app nights.
+- Produce deduplicated sleep timelines and stage durations with unknown/conflicting/missing data visible.
+- Add read-only device-clock metadata, durable private CLI capture and offline decoding/analysis.
+
 ## 0.2.0 — 2026-11-07
 
 - Add experimental SDK-layout sleep-history reads and offline sleep decoding.
