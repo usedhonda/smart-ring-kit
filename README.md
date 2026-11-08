@@ -45,6 +45,11 @@ temperature; unmatched hints may return all retained history. The vendor app's f
 see [stress evidence and ingestion timing](docs/stress-and-ingestion.md).
 See the [data contract](docs/data-model.md) for details.
 
+[Multimodal stress research inputs](docs/stress-analysis.md) combine heart rate,
+raw HRV/fatigue, activity, temperature, oxygen and explicitly mapped sleep with
+source times, age limits and conflicts preserved. The Apple API and offline CLI
+include a descriptive heart-rate reference, not a validated stress score.
+
 All implemented device requests are read-only. The toolkit does not configure
 sampling, erase data, update firmware or access the manufacturer's account/cloud.
 Concurrent vendor-app history requests interfered with acquisition; use exclusive
