@@ -24,7 +24,10 @@ this does not mean every modality was sensed simultaneously. Assemble only
 histories actually received by that availability time. The adapter includes
 unambiguous, age-qualified heart rate, activity steps, SDK-scaled temperature
 and explicitly analyzed sleep-stage observed seconds. Sleep gaps are not awake;
-stage counts are not a whole-night recovery score. Select the same explicit
+stage counts are not a whole-night recovery score. Empty contexts and sleep
+windows containing only missing or unknown stages contribute no features.
+Known-stage observations may still be partial; their counts describe only the
+observed intervals. Select the same explicit
 sleep-window policy in training and inference. No automatic session is guessed.
 
 The adapter excludes the **entire `0x56` context**: its current fatigue, HRV,
@@ -92,10 +95,22 @@ All methods return an available, nonconflicting native value at its exact
 measurement time as `native_observed`. A native value off the ten-minute grid
 retains its original time; it is not relabelled as a new grid-time observation.
 
-`learnedDecay` fits retention from chronological prior-UTC-day prediction
-errors within the training window, rather than residuals after fitting each
-target. This UTC blocking is an evaluation convention, not a sleep-night
-boundary. It uses real gaps within the maximum anchor age and a fixed numerical
+`learnedDecay` reconstructs each frozen daily regression using only observations
+received by the start of that UTC day, resolving conflicts at that historical
+knowledge cutoff. Each daily training window ends at its own cutoff, rather
+than the final model's cutoff. A later revision
+cannot remove a record from a model that was already frozen. Held-out current
+inputs must have been available at the target's measurement time; the target
+label itself may arrive later for evaluation.
+
+For each target, calibration hides that target event and selects the latest
+predecessor actually available at forecast time; conflicts or unusable anchor
+inputs exclude that pair. Its input snapshot
+is selected at the predecessor's receipt time, matching ordinary inference.
+Both residuals use the same frozen daily regression. Pairs crossing a UTC-day
+boundary are omitted so a model refit cannot be mistaken for signal decay.
+This UTC blocking is an evaluation convention, not a sleep-night boundary.
+Calibration uses real gaps within the maximum anchor age and a fixed numerical
 grid `rho = 0, 0.01, ..., 1`, minimizing squared residual-pair prediction error.
 Negative dependence is not represented. `rho == 0` means no residual correction
 at any positive age; exact native observations still take precedence. Models
@@ -115,10 +130,17 @@ times, anchor measurement/availability/age/value, input snapshot time, method,
 model version, training cutoff/count and residual-pair/retention metadata.
 `validationStatus` is always `experimental_unvalidated`.
 
+The corrected calibration and input handling use model version
+`native-fatigue-ridge-decay-v2`; retain this identifier with stored results to
+distinguish them from v0.7.0's v1 estimates. This version change does not establish
+predictive or clinical validity.
+
 Statuses are `native_observed`, `estimated`, and `unavailable`. Missing inputs,
 stale anchors, conflicts, inadequate training, missing calibration pairs,
 extrapolation or predictions outside the native byte range return no numeric
-value. Estimates are not clipped into a reassuring score or stress category.
+value. Nonfinite regression intermediates fail with `invalid_training_fit`
+instead of silently collapsing a feature into a constant prediction. Estimates
+are not clipped into a reassuring score or stress category.
 
 ```swift
 let timeline = try estimator.tenMinuteSeries(
@@ -126,9 +148,11 @@ let timeline = try estimator.tenMinuteSeries(
 )
 ```
 
-The interval is start-inclusive/end-exclusive, with one result every600seconds,
+The interval is start-inclusive/end-exclusive, with one result every 600 seconds,
 including explicit unavailable slots. Replay uses each slot as its knowledge
-time. The window is bounded to366days. For a historical-data replay without
+time. The window is bounded to 366 days. A clock too large to advance by the
+requested interval is rejected instead of producing an endless replay.
+For a historical-data replay without
 receipt logs, disclose any assumed availability times; measurement time alone
 does not prove that data was actually available then.
 
