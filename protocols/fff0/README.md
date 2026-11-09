@@ -172,6 +172,7 @@ and opaque-record handling. No score algorithm or night boundaries are invented.
 No firmware modification is needed for this read subset. Firmware updates,
 reset, history deletion, clock configuration, and medical interpretation are
 outside the current implementation.
+
 ### Passive history quiescence
 
 Apple `RingClient.waitForHistoryIdle` observes notifications without writing a
@@ -182,4 +183,3 @@ if pagination pauses. All observed traffic counts against the byte budget and
 is available through the observation callback. Timeout returns `RingError.busy`.
 This is best-effort admission, not an inter-app mutex: another client can start
 afterward. Callers must still preserve partial traffic and stop on conflicts.
-
