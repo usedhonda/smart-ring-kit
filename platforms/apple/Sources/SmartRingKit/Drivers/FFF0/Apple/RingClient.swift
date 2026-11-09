@@ -34,11 +34,15 @@ public final class RingClient: NSObject, @preconcurrency CBCentralManagerDelegat
     private var unexpectedNotificationHandler: (@MainActor (Data) -> Void)?
     private var continuationTask: Task<Void, Never>?
     private var continuationPacket: Data?
+    private var historyIdleGate: RingHistoryIdleGate?
+    private var historyObserver: (@MainActor (Data) -> Void)?
+    private var historyIdleTask: Task<Void, Never>?
 
     private enum Phase {
         case idle, discovery, connecting
         case request(RingReadCommand)
         case rawHistory(RingReadCommand)
+        case historyIdle
     }
     private enum Response {
         case devices([RingPeripheral]), ready, packet(Data), history([RingHRVRecord])
@@ -48,6 +52,36 @@ public final class RingClient: NSObject, @preconcurrency CBCentralManagerDelegat
     public override init() {
         super.init()
         central = CBCentralManager(delegate: self, queue: .main)
+    }
+
+    /// Observe notifications without writing a device request. Wait for a quiet
+    /// interval and any observed history terminators; timeout returns busy.
+    /// Another app may still start a request afterward, so this is not a bus lock.
+    public func waitForHistoryIdle(quietPeriod: TimeInterval = 5, timeout: TimeInterval = 30,
+                                  maxBytes: Int = 2_000_000,
+                                  onNotification: (@MainActor (Data) -> Void)? = nil) async throws {
+        guard quietPeriod.isFinite, quietPeriod > 0, timeout.isFinite, timeout > quietPeriod,
+              maxBytes > 0 else { throw RingError.invalidPacket("invalid history idle policy") }
+        guard peripheral?.state == .connected, notifyCharacteristic?.isNotifying == true else {
+            throw RingError.disconnected
+        }
+        guard case .ready = try await perform(timeout: timeout, phase: .historyIdle, start: {
+            self.historyIdleGate = RingHistoryIdleGate(quietPeriod: quietPeriod, maxBytes: maxBytes, startedAt: Date())
+            self.historyObserver = onNotification
+            self.scheduleHistoryIdleCheck()
+        }) else { throw RingError.invalidPacket("unexpected idle observation response") }
+    }
+
+    private func scheduleHistoryIdleCheck() {
+        historyIdleTask?.cancel()
+        guard let gate = historyIdleGate, gate.unfinished.isEmpty, let id = operationID else { return }
+        historyIdleTask = Task { @MainActor [weak self] in
+            do { try await Task.sleep(for: .seconds(gate.quietPeriod)) }
+            catch { return }
+            guard !Task.isCancelled, let self, self.operationID == id,
+                  self.historyIdleGate?.isQuiet(at: Date()) == true else { return }
+            self.finish(.success(.ready))
+        }
     }
 
     /// Includes system-connected FFF0 peripherals and advertising SRR-* candidates.
@@ -180,7 +214,8 @@ public final class RingClient: NSObject, @preconcurrency CBCentralManagerDelegat
                         guard let self, self.operationID == id else { return }
                         if case .discovery = self.phase {
                             self.finish(.success(.devices(self.candidates.values.sorted { $0.id.uuidString < $1.id.uuidString })))
-                        } else { self.fail(RingError.timedOut) }
+                        } else if case .historyIdle = self.phase { self.fail(RingError.busy) }
+                        else { self.fail(RingError.timedOut) }
                     }
                 }
                 start()
@@ -209,6 +244,8 @@ public final class RingClient: NSObject, @preconcurrency CBCentralManagerDelegat
     }
 
     private func finish(_ result: Result<Response, Error>) {
+        historyIdleTask?.cancel(); historyIdleTask = nil
+        historyIdleGate = nil; historyObserver = nil
         continuationTask?.cancel()
         continuationTask = nil
         continuationPacket = nil
@@ -311,6 +348,15 @@ public final class RingClient: NSObject, @preconcurrency CBCentralManagerDelegat
         guard p === peripheral, characteristic.uuid == Self.notifyID else { return }
         if let error { fail(RingError.transport(error.localizedDescription)); return }
         guard let data = characteristic.value, !data.isEmpty else { return }
+        if case .historyIdle = phase {
+            guard let id = operationID else { return }
+            do { try historyIdleGate?.observe(data, at: Date()) }
+            catch { fail(error); return }
+            historyObserver?(data)
+            guard operationID == id else { return }
+            scheduleHistoryIdleCheck()
+            return
+        }
         if case .rawHistory(let command) = phase {
             guard let id = operationID else { return }
             guard data.first == command.rawValue else {
