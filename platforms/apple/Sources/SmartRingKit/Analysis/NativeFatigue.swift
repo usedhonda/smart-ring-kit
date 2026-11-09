@@ -17,12 +17,15 @@ public struct RingFatigueSample: Codable, Equatable, Sendable {
                                      (0x52, "steps", "activitySteps"),
                                      (0x62, "temperatureSDKValue", "temperatureSDKValue")] {
             if let c = inputs.contexts.first(where: { $0.command == command }), c.withinAgeLimit,
-               !c.isConflicting, let v = c.records[0].measurements.first(where: { $0.name == name })?.value {
+               c.records.count == 1, let record = c.records.first,
+               let v = record.measurements.first(where: { $0.name == name })?.value {
                 values[key] = v
             }
         }
-        if let sleep = inputs.sleep, !sleep.intervals.isEmpty, sleep.conflictingMinutes == 0 {
-            for stage in [RingSleepStage.deep, .light, .rem, .awake] {
+        let observedStages: [RingSleepStage] = [.deep, .light, .rem, .awake]
+        if let sleep = inputs.sleep, sleep.conflictingMinutes == 0,
+           sleep.intervals.contains(where: { observedStages.contains($0.stage) && !$0.conflicting && $0.start < $0.end }) {
+            for stage in observedStages {
                 values["sleep\(stage.rawValue.capitalized)ObservedSeconds"] = sleep.durations.first { $0.stage == stage }?.seconds ?? 0
             }
         }
@@ -86,7 +89,7 @@ public struct RingFatigueEstimate: Codable, Sendable {
 
 /// Experimental native-fatigue proxy. No background task, BLE write, clinical scale or trained weights.
 public struct RingFatigueEstimator: Sendable {
-    public static let modelVersion = "native-fatigue-ridge-decay-v1"
+    public static let modelVersion = "native-fatigue-ridge-decay-v2"
     public let configuration: RingFatigueConfiguration
     public let trainingBefore: Date
     public let trainedAsOf: Date
@@ -94,7 +97,7 @@ public struct RingFatigueEstimator: Sendable {
     public let residualPairs: Int
     public let retentionPerHour: Double?
     private let fit: Regression?
-    private struct Point { let at: Date; let availableAt: Date; let x: [Double]; let y: Double }
+    private struct Point { let x: [Double]; let y: Double }
     private struct Regression: Sendable {
         let means: [Double], scales: [Double], lower: [Double], upper: [Double], coefficients: [Double]
         func accepts(_ x: [Double]) -> Bool { x.indices.allSatisfy { x[$0] >= lower[$0] && x[$0] <= upper[$0] } }
@@ -118,45 +121,61 @@ public struct RingFatigueEstimator: Sendable {
         }
         try Self.validate(samples, anchors)
         configuration = c; trainingBefore = before; trainedAsOf = asOf
-        let visibleAnchors = Self.uniqueAnchors(anchors.filter { $0.measuredAt < before && $0.availableAt <= asOf && before.timeIntervalSince($0.measuredAt) <= c.trainingWindowSeconds })
-        let points = visibleAnchors.compactMap { a -> Point? in
-            guard let sample = Self.sample(samples, at: a.measuredAt, asOf: min(asOf, a.availableAt), c: c),
-                  let x = Self.vector(sample, c) else { return nil }
-            return Point(at: a.measuredAt, availableAt: a.availableAt, x: x, y: Double(a.value))
-        }.sorted { $0.at < $1.at }
+        let visibleAnchors = Self.trainingAnchors(anchors, before: before, asOf: asOf, c: c)
+        let points = Self.trainingPoints(samples, anchors: visibleAnchors, c: c)
         trainingSamples = points.count
         fit = points.count >= c.minimumTrainingSamples ? Self.regress(points, c.ridgePenalty) : nil
-        var errors: [(Date, Double)] = []
+        var pairs: [(hours: Double, previous: Double, current: Double)] = []
         if c.correction == .learnedDecay {
             var cachedDay: Double?, previousFit: Regression?
-            for p in points {
-                let day = floor(p.at.timeIntervalSince1970 / 86400) * 86400
+            for target in visibleAnchors {
+                let day = floor(target.measuredAt.timeIntervalSince1970 / 86400) * 86400
                 if cachedDay != day {
-                    let past = points.filter { $0.at.timeIntervalSince1970 < day && $0.availableAt.timeIntervalSince1970 <= day }
+                    let cutoff = Date(timeIntervalSince1970: day)
+                    // Reconstruct the historical knowledge state before resolving conflicts.
+                    // A later revision must not change a model frozen at this cutoff.
+                    let pastAnchors = Self.trainingAnchors(anchors, before: cutoff, asOf: cutoff, c: c)
+                    let past = Self.trainingPoints(samples, anchors: pastAnchors, c: c)
                     previousFit = past.count >= c.minimumTrainingSamples ? Self.regress(past, c.ridgePenalty) : nil
                     cachedDay = day
                 }
-                if let f = previousFit, f.accepts(p.x) { errors.append((p.at, p.y - f.predict(p.x))) }
+                guard let f = previousFit,
+                      let current = Self.sample(samples, at: target.measuredAt, asOf: target.measuredAt, c: c),
+                      let x = Self.vector(current, c), f.accepts(x) else { continue }
+                // Hide the target event and select the anchor that a real-time query
+                // could actually use, including intervening conflicts or missing inputs.
+                let known = anchors.filter { $0.measuredAt < target.measuredAt && $0.availableAt <= target.measuredAt }
+                guard let latestTime = known.map(\.measuredAt).max(),
+                      latestTime.timeIntervalSince1970 >= day,
+                      before.timeIntervalSince(latestTime) <= c.trainingWindowSeconds else { continue }
+                let latest = known.filter { $0.measuredAt == latestTime }
+                guard Set(latest.map(\.value)).count == 1,
+                      let anchor = latest.min(by: { $0.availableAt < $1.availableAt }) else { continue }
+                let age = target.measuredAt.timeIntervalSince(anchor.measuredAt)
+                guard age > 0, age <= c.maximumAnchorAgeSeconds,
+                      let old = Self.sample(samples, at: anchor.measuredAt, asOf: anchor.availableAt, c: c),
+                      let ax = Self.vector(old, c), f.accepts(ax) else { continue }
+                // Both residuals use this day's same frozen model. Cross-day pairs
+                // cannot mistake a model refit for decay in the native signal.
+                let previous = Double(anchor.value) - f.predict(ax)
+                let currentError = Double(target.value) - f.predict(x)
+                guard previous.isFinite, currentError.isFinite else { continue }
+                pairs.append((age / 3600, previous, currentError))
             }
-        }
-        let pairs = zip(errors, errors.dropFirst()).filter {
-            let age = $0.1.0.timeIntervalSince($0.0.0)
-            return age > 0 && age <= c.maximumAnchorAgeSeconds
         }
         residualPairs = pairs.count
         // Fixed numerical grid, fit on development data only. rho=0 means no correction
         // after the exact anchor instant. Negative serial dependence is not represented.
-        if !pairs.isEmpty, pairs.contains(where: { abs($0.0.1) > 1e-12 }) {
-            retentionPerHour = (0...100).map { Double($0) / 100 }.min { a, b in
-                func loss(_ rho: Double) -> Double {
-                    pairs.reduce(0) { sum, pair in
-                        let age = pair.1.0.timeIntervalSince(pair.0.0) / 3600
-                        let e = pair.1.1 - pow(rho, age) * pair.0.1
-                        return sum + e * e
-                    }
+        if pairs.contains(where: { abs($0.previous) > 1e-12 }) {
+            let candidates = (0...100).map { index -> (rho: Double, loss: Double) in
+                let rho = Double(index) / 100
+                let loss = pairs.reduce(0.0) { sum, pair in
+                    let e = pair.current - pow(rho, pair.hours) * pair.previous
+                    return sum + e * e
                 }
-                return loss(a) < loss(b)
+                return (rho, loss)
             }
+            retentionPerHour = candidates.filter { $0.loss.isFinite }.min { $0.loss < $1.loss }?.rho
         } else { retentionPerHour = nil }
     }
 
@@ -187,7 +206,10 @@ public struct RingFatigueEstimator: Sendable {
         let age = at.timeIntervalSince(a.measuredAt)
         guard age <= configuration.maximumAnchorAgeSeconds else { return result("unavailable", nil, "stale_anchor") }
         if configuration.correction == .carryForward { return result("estimated", Double(a.value)) }
-        guard let fit else { return result("unavailable", nil, "insufficient_training") }
+        guard let fit else {
+            return result("unavailable", nil, trainingSamples < configuration.minimumTrainingSamples
+                          ? "insufficient_training" : "invalid_training_fit")
+        }
         guard let sample, let x = Self.vector(sample, configuration) else { return result("unavailable", nil, "missing_stale_or_conflicting_input") }
         guard fit.accepts(x) else { return result("unavailable", nil, "outside_training_range") }
         var value = fit.predict(x)
@@ -211,12 +233,16 @@ public struct RingFatigueEstimator: Sendable {
     public func tenMinuteSeries(samples: [RingFatigueSample], anchors: [RingNativeFatigueAnchor],
                                 start: Date, end: Date) throws -> [RingFatigueEstimate] {
         guard Self.valid(start), Self.valid(end), end >= start, end.timeIntervalSince(start) <= 366 * 86400 else {
-            throw RingError.invalidPacket("invalid fatigue replay window (maximum366days)")
+            throw RingError.invalidPacket("invalid fatigue replay window (maximum 366 days)")
         }
         var at = start, results: [RingFatigueEstimate] = []
         while at < end {
+            let next = at.addingTimeInterval(600)
+            guard Self.valid(next), next > at else {
+                throw RingError.invalidPacket("fatigue replay clock cannot advance by ten minutes")
+            }
             results.append(try estimate(samples: samples, anchors: anchors, at: at, asOf: at))
-            at = at.addingTimeInterval(600)
+            at = next
         }
         return results
     }
@@ -233,6 +259,20 @@ public struct RingFatigueEstimator: Sendable {
             Set(rows.map(\.value)).count == 1 ? rows.min { $0.availableAt < $1.availableAt } : nil
         }
     }
+    private static func trainingAnchors(_ anchors: [RingNativeFatigueAnchor], before: Date, asOf: Date,
+                                        c: RingFatigueConfiguration) -> [RingNativeFatigueAnchor] {
+        uniqueAnchors(anchors.filter {
+            $0.measuredAt < before && $0.availableAt <= asOf && before.timeIntervalSince($0.measuredAt) <= c.trainingWindowSeconds
+        }).sorted { $0.measuredAt < $1.measuredAt }
+    }
+    private static func trainingPoints(_ samples: [RingFatigueSample], anchors: [RingNativeFatigueAnchor],
+                                       c: RingFatigueConfiguration) -> [Point] {
+        anchors.compactMap { anchor in
+            guard let input = sample(samples, at: anchor.measuredAt, asOf: anchor.availableAt, c: c),
+                  let x = vector(input, c) else { return nil }
+            return Point(x: x, y: Double(anchor.value))
+        }
+    }
     private static func sample(_ samples: [RingFatigueSample], at: Date, asOf: Date, c: RingFatigueConfiguration) -> RingFatigueSample? {
         let visible = samples.filter { $0.measuredAt <= at && $0.availableAt <= asOf && at.timeIntervalSince($0.measuredAt) <= c.maximumSampleAgeSeconds }
         guard let time = visible.map(\.measuredAt).max() else { return nil }
@@ -247,11 +287,14 @@ public struct RingFatigueEstimator: Sendable {
     private static func regress(_ points: [Point], _ penalty: Double) -> Regression? {
         let width = points[0].x.count
         let means = (0..<width).map { j in points.reduce(0) { $0 + $1.x[j] } / Double(points.count) }
+        guard means.allSatisfy(\.isFinite) else { return nil }
         let scales = (0..<width).map { j in
             let s = sqrt(points.reduce(0) { $0 + pow($1.x[j] - means[j], 2) } / Double(points.count))
             return s > 0 ? s : 1
         }
+        guard scales.allSatisfy(\.isFinite) else { return nil }
         let rows = points.map { p in [1.0] + (0..<width).map { (p.x[$0] - means[$0]) / scales[$0] } }
+        guard rows.allSatisfy({ $0.allSatisfy(\.isFinite) }) else { return nil }
         let n = width + 1
         var matrix: [[Double]] = Array(repeating: Array(repeating: 0, count: n + 1), count: n)
         for j in 0..<n {

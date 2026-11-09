@@ -20,6 +20,8 @@ let inputs = try RingStressInputs.assemble(
 Omit both sleep arguments for an unknown profile or an unestablished session.
 The caller supplies the historical time zone, age policy and analysis windows.
 Both windows must end no later than evaluation; the reference is end-exclusive.
+Pass histories from the same person, device and firmware profile. Decoded
+histories contain no source identity for this API to enforce that separation.
 Timezone changes and repeated daylight-saving wall times may require segmenting
 the source history first. A timezone name alone cannot disambiguate every clock.
 
@@ -47,13 +49,23 @@ invented model inputs. Decoder issues are preserved. Because decoded records do
 not establish radio completion, `transferCompletenessKnown` is false: keep
 capture failures, completeness and receipt times separately. Measurement-time
 assembly does not prove that data had arrived in an app at that historical time.
+For arrival-time retrospective evaluation, the caller must first exclude records
+received after the evaluation time.
+
+Sleep samples must have completed by evaluation before they contribute. Their
+completed intervals are then clipped to the requested sleep window, so a sample
+crossing a past window's end contributes only its overlap. A five-minute sample
+that is still in progress at evaluation contributes nothing.
 
 ## Descriptive heart-rate reference
 
 An optional window produces `median-mad-v1`: select distinct, nonconflicting
 positive `0x55` BPM values; compute their median and median absolute deviation;
 return current-minus-median in BPM and, for positive dispersion, difference/MAD.
-The current value must be unambiguous and inside the age limit. An absent
+The current value must be unambiguous and inside the age limit. When it falls
+inside the reference window, its timestamp is excluded from the reference so it
+cannot influence its own difference. Without a usable current value, all
+eligible reference samples remain and no current difference is produced. An absent
 reference produces no reference; zero dispersion produces no normalized
 difference, **not zero stress**. Sample/conflict counts are exposed. No minimum
 clinical sample count, probability, clipping or category threshold is encoded.

@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Correct native-fatigue decay calibration to reconstruct historical knowledge, use available predecessor anchors and inputs, and keep both residuals on the same frozen daily model; identify corrected estimates as model v2.
+- Keep empty feature contexts and wholly missing/unknown sleep windows unavailable; reject numerically unusable regression fits and replay clocks that cannot advance.
+- Exclude the current heart-rate observation from its own descriptive reference, including when evaluation occurs after the observation.
+- Include the overlapping portion of completed sleep samples at a historical window boundary while excluding samples still in progress at evaluation.
+
 ## 0.7.0 — 2026-11-08
 
 - Add an experimental native-fatigue predictor with explicit carry, regression, residual and learned-decay modes; no pretrained weights or psychological-stress validation.
