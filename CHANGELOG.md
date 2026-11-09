@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+## 0.7.1 — 2026-11-09
+
+- Add opt-in passive history quiescence admission with bounded notification observation and busy timeout, without changing sensor settings or claiming an inter-app lock.
 - Correct native-fatigue decay calibration to reconstruct historical knowledge, use available predecessor anchors and inputs, and keep both residuals on the same frozen daily model; identify corrected estimates as model v2.
 - Keep empty feature contexts and wholly missing/unknown sleep windows unavailable; reject numerically unusable regression fits and replay clocks that cannot advance.
 - Exclude the current heart-rate observation from its own descriptive reference, including when evaluation occurs after the observation.
